@@ -257,7 +257,7 @@
 </head>
 <body>
 <header>
-  <div class="brand">Eldorado Parking<small>Morgan Hill, CA · Prototype</small></div>
+  <div class="brand">Eldorado Community<small>Morgan Hill, CA · Prototype</small></div>
   <div class="role">
     <select id="roleSelect" aria-label="Acting as">
       <!-- filled by JS -->
@@ -285,8 +285,9 @@
     <h1 id="residentHello">My Parking</h1>
 
     <div class="seg" id="residentTabs" style="margin-bottom:14px;">
-      <button data-rtab="permits" class="active">Permits</button>
+      <button data-rtab="permits" class="active">Guest permits</button>
       <button data-rtab="request">Request permit</button>
+      <button data-rtab="pool">Pool party</button>
       <button data-rtab="violations">My violations</button>
       <button data-rtab="vehicles">My vehicles</button>
       <button data-rtab="renter">Renter</button>
@@ -294,6 +295,7 @@
 
     <div id="rtab-permits"></div>
     <div id="rtab-request"></div>
+    <div id="rtab-pool"></div>
     <div id="rtab-violations"></div>
     <div id="rtab-vehicles"></div>
     <div id="rtab-renter"></div>
@@ -339,6 +341,15 @@ const CONFIG = {
   MAX_SELF_SERVE_DAYS_30: 4,    // self-serve permit-days per rolling 30 days
   MIN_GAP_HOURS: 24,            // no new permit within 24h of a prior one expiring
   VEHICLE_RETENTION_DAYS: 90,   // soft-deleted vehicles kept this long for enforcement history
+  // Pool-party policy (2024 adopted pool rules)
+  POOL: {
+    CAPACITY: 28,               // max people incl. host, family, guests
+    MAX_HOURS: 3,               // max party length
+    EARLIEST_START: "07:00",    // pool opens 7am
+    LATEST_END: "20:00",        // parties must conclude by 8pm
+    ADVANCE_DAYS: 14,           // requests at least two weeks ahead
+    DEPOSIT: 150,               // refundable deposit, held until inspection
+  },
 };
 
 /* Single permit type for this association: guest-lot overnight.
@@ -406,6 +417,17 @@ const db = {
       decided_by: null, notes: "", is_guest: true, guest_desc: "Black Jeep Wrangler", guest_state: "CA" },
   ],
 
+  poolParties: [
+    // Pending request awaiting board approval
+    { id: "pp1", requested_by: "h2", date: daysFromToday(18), start_time: "14:00", end_time: "17:00",
+      guest_count: 20, notes: "Daughter's birthday — gazebo.", status: "pending",
+      created_at: daysFromToday(0), decided_by: null, comment: "" },
+    // Previously approved party
+    { id: "pp2", requested_by: "h1", date: daysFromToday(25), start_time: "11:00", end_time: "14:00",
+      guest_count: 12, notes: "Family reunion.", status: "approved",
+      created_at: daysFromToday(-2), decided_by: "a1", comment: "Deposit received. Enjoy!" },
+  ],
+
   violations: [
     { id: "v1", plate: "6GHJ789", rule_id: "r2", location: "Guest Lot B, stall 14",
       occurred_at: daysFromToday(-20) + "T01:10", logged_by: "a1", photo: null,
@@ -437,6 +459,12 @@ function seedAudit() {
     channel: "notice", recipient: "Windshield · plate 9NOP000",
     detail: "Strike 1 — Parking on red curb. No owner on file; windshield notice posted. Strike accrues to the plate.",
     at: daysFromToday(-3) + "T22:06", delivered: true });
+  logAudit({ entity_type: "pool_party", entity_id: "pp2", action: "pool_party_approved",
+    channel: "email", recipient: "maria.alvarez@example.com",
+    detail: "Pool-party (gazebo) approved by Dolores Reyes. Deposit received. Enjoy!", at: daysFromToday(-1) + "T09:15" });
+  logAudit({ entity_type: "pool_party", entity_id: "pp1", action: "pool_party_requested",
+    channel: "in-app", recipient: "Board queue",
+    detail: "Pool-party (gazebo) request from James Okafor, 20 people. Needs board approval; $150 deposit due.", at: daysFromToday(0) + "T08:00" });
 }
 
 /* =====================================================================
@@ -607,6 +635,79 @@ function decidePermit(permitId, decision, modifiedEnd) {
 function hasActivePermit(plate) {
   return db.permits.find(p => p.plate === plate && p.status === "active"
     && p.end_date >= todayISO && p.start_date <= todayISO) || null;
+}
+
+/* =====================================================================
+   POOL PARTY LOGIC  (gazebo reservation — board-approved per 2024 rules)
+   ===================================================================== */
+function partiesOf(ownerId) {
+  return db.poolParties.filter(p => p.requested_by === ownerId)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+}
+function fmtTime(hhmm) {
+  if (!hhmm) return "—";
+  const [h, m] = hhmm.split(":").map(Number);
+  const ap = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${ap}`;
+}
+function minutesOf(hhmm) { const [h, m] = hhmm.split(":").map(Number); return h * 60 + m; }
+
+/* Validate a party request against the adopted pool rules.
+   Returns { ok, issues:[...], conflict:bool }. */
+function evaluatePoolParty({ date, start, end, guests, ignoreId }) {
+  const P = CONFIG.POOL;
+  const issues = [];
+  const earliest = daysFromToday(P.ADVANCE_DAYS);
+  if (!date) issues.push("Pick a date for the party.");
+  else if (date < earliest) issues.push(`Requests must be at least ${P.ADVANCE_DAYS} days ahead (earliest ${fmtDate(earliest)}).`);
+  const g = parseInt(guests, 10);
+  if (!g || g < 1) issues.push("Enter the number of people attending.");
+  else if (g > P.CAPACITY) issues.push(`Limit is ${P.CAPACITY} people total (including the host).`);
+  if (!start || !end) issues.push("Set a start and end time.");
+  else {
+    if (minutesOf(end) <= minutesOf(start)) issues.push("End time must be after the start time.");
+    else if (minutesOf(end) - minutesOf(start) > P.MAX_HOURS * 60) issues.push(`Parties are limited to ${P.MAX_HOURS} hours.`);
+    if (minutesOf(start) < minutesOf(P.EARLIEST_START)) issues.push(`The pool opens at ${fmtTime(P.EARLIEST_START)}.`);
+    if (minutesOf(end) > minutesOf(P.LATEST_END)) issues.push(`Parties must end by ${fmtTime(P.LATEST_END)}.`);
+  }
+  // Informational: another approved/pending party already on this date.
+  const conflict = !!date && db.poolParties.some(p => p.id !== ignoreId && p.date === date
+    && (p.status === "approved" || p.status === "pending"));
+  return { ok: issues.length === 0, issues, conflict };
+}
+
+function submitPoolParty({ ownerId, date, start, end, guests, notes }) {
+  const party = {
+    id: uid("pp"), requested_by: ownerId, date, start_time: start, end_time: end,
+    guest_count: parseInt(guests, 10), notes: notes || "", status: "pending",
+    created_at: nowStamp(), decided_by: null, comment: "",
+  };
+  db.poolParties.push(party);
+  const owner = getOwner(ownerId);
+  logAudit({ entity_type: "pool_party", entity_id: party.id, action: "pool_party_requested",
+    channel: "in-app", recipient: "Board queue",
+    detail: `Pool-party (gazebo) request from ${owner.name} for ${fmtDate(date)} ${fmtTime(start)}–${fmtTime(end)}, ${party.guest_count} ppl. Needs board approval; $${CONFIG.POOL.DEPOSIT} deposit due.` });
+  return party;
+}
+
+function decidePoolParty(partyId, decision, comment) {
+  const p = db.poolParties.find(x => x.id === partyId);
+  if (!p) return;
+  const owner = getOwner(p.requested_by);
+  p.decided_by = state.actingAs;
+  p.comment = comment || "";
+  if (decision === "approve") {
+    p.status = "approved";
+    logAudit({ entity_type: "pool_party", entity_id: p.id, action: "pool_party_approved",
+      channel: "email", recipient: owner.email,
+      detail: `Pool-party for ${fmtDate(p.date)} approved by ${getOwner(state.actingAs).name}.${comment ? " Note: " + comment : ""} $${CONFIG.POOL.DEPOSIT} deposit held until post-event inspection.` });
+  } else {
+    p.status = "denied";
+    logAudit({ entity_type: "pool_party", entity_id: p.id, action: "pool_party_denied",
+      channel: "email", recipient: owner.email,
+      detail: `Pool-party for ${fmtDate(p.date)} denied by ${getOwner(state.actingAs).name}.${comment ? " Reason: " + comment : ""}` });
+  }
 }
 
 /* =====================================================================
@@ -968,11 +1069,12 @@ function renderResident() {
 
   document.querySelectorAll('#residentTabs button').forEach(b =>
     b.classList.toggle("active", b.dataset.rtab === state.rtab));
-  ["permits", "request", "violations", "vehicles", "renter"].forEach(t =>
+  ["permits", "request", "pool", "violations", "vehicles", "renter"].forEach(t =>
     $("#rtab-" + t).style.display = t === state.rtab ? "block" : "none");
 
   if (state.rtab === "permits") renderResidentPermits();
   if (state.rtab === "request") renderRequestForm();
+  if (state.rtab === "pool") renderResidentPool();
   if (state.rtab === "violations") renderResidentViolations();
   if (state.rtab === "vehicles") renderResidentVehicles();
   if (state.rtab === "renter") renderRenterManage();
@@ -1205,6 +1307,101 @@ function renderResidentViolations() {
     }).join("");
   }
   host.innerHTML = html;
+}
+
+/* ---------- POOL PARTY (resident) ---------- */
+function renderResidentPool() {
+  const u = currentUser();
+  const host = $("#rtab-pool");
+  const P = CONFIG.POOL;
+
+  // A homeowner who has leased out the home relinquishes pool privileges to the renter.
+  const renter = activeRenterFor(u.id);
+  if (renter) {
+    host.innerHTML = `<div class="card"><div class="notice warn">🔑 This unit is leased to <strong>${escapeHtml(renter.name)}</strong>. Per the pool rules, pool privileges transfer to the renter while the lease is active.</div></div>`;
+    return;
+  }
+
+  if (!state.party) state.party = { date: "", start: "14:00", end: "17:00", guests: "", notes: "", agreeRules: false, agreeDeposit: false };
+  const pr = state.party;
+  const earliest = daysFromToday(P.ADVANCE_DAYS);
+  const mine = partiesOf(u.id);
+
+  const listHtml = mine.map(p => `
+    <div class="listitem">
+      <div class="row spread"><strong>${fmtDate(p.date)}</strong>${statusPill(p.status)}</div>
+      <div class="meta">${fmtTime(p.start_time)}–${fmtTime(p.end_time)} · ${p.guest_count} people${p.notes ? " · " + escapeHtml(p.notes) : ""}</div>
+      ${p.comment ? `<div class="meta">Board: “${escapeHtml(p.comment)}”</div>` : ""}
+    </div>`).join("");
+
+  host.innerHTML = `
+    ${isRenter(u) ? renterLeaseHtml(u) : ""}
+    <div class="card">
+      <h2 style="margin-top:0;">Reserve the pool gazebo</h2>
+      <div class="notice info">Reserves the <strong>gazebo area</strong> for your party. The pool/spa stay open to other residents up to the ${P.CAPACITY}-person capacity. Every request goes to the board for approval.</div>
+      <label class="field"><span>Date</span><input id="ppDate" type="date" min="${earliest}" value="${pr.date}"></label>
+      <div class="grid2">
+        <label class="field"><span>Start</span><input id="ppStart" type="time" value="${pr.start}"></label>
+        <label class="field"><span>End</span><input id="ppEnd" type="time" value="${pr.end}"></label>
+      </div>
+      <label class="field"><span>People attending (max ${P.CAPACITY}, including you)</span><input id="ppGuests" type="number" inputmode="numeric" min="1" max="${P.CAPACITY}" value="${pr.guests}"></label>
+      <label class="field"><span>Notes (type of party, etc.)</span><textarea id="ppNotes" placeholder="Optional">${escapeHtml(pr.notes || "")}</textarea></label>
+
+      <div class="notice warn" style="font-size:12.5px;">
+        <strong>Pool party rules</strong>
+        <ul style="margin:6px 0 0 18px; padding:0;">
+          <li>Submit at least ${P.ADVANCE_DAYS} days ahead; the board approves every party.</li>
+          <li>Up to ${P.CAPACITY} people total · ${P.MAX_HOURS}-hour max · must end by ${fmtTime(P.LATEST_END)}.</li>
+          <li>$${P.DEPOSIT} deposit due with the request, held until the area is inspected.</li>
+          <li>You (the host) must be present the whole time and have approval available on request.</li>
+          <li>You're responsible for cleanup and any damage.</li>
+        </ul>
+      </div>
+      <label class="row" style="gap:10px; align-items:flex-start; margin:10px 0;"><input id="ppAgree" type="checkbox" style="width:auto; min-height:0;" ${pr.agreeRules ? "checked" : ""}><span class="muted" style="font-size:13px;">I have read and agree to abide by all pool rules, plus local, county and state laws.</span></label>
+      <label class="row" style="gap:10px; align-items:flex-start; margin:10px 0;"><input id="ppDeposit" type="checkbox" style="width:auto; min-height:0;" ${pr.agreeDeposit ? "checked" : ""}><span class="muted" style="font-size:13px;">I understand a $${P.DEPOSIT} deposit is required and I must be present for the entire party.</span></label>
+
+      <div id="ppPreview"></div>
+      <button class="btn-primary btn-block" onclick="doSubmitPoolParty()">Submit request</button>
+    </div>
+    ${mine.length ? `<h2>My pool party requests</h2><div class="card">${listHtml}</div>` : ""}
+  `;
+  ["ppDate", "ppStart", "ppEnd", "ppGuests", "ppNotes", "ppAgree", "ppDeposit"].forEach(id => {
+    const el = $("#" + id); if (el) el.addEventListener("input", previewPoolParty);
+  });
+  previewPoolParty();
+}
+
+function previewPoolParty() {
+  const pr = state.party; if (!pr) return;
+  // keep state in sync so data survives re-renders
+  if ($("#ppDate")) {
+    pr.date = $("#ppDate").value; pr.start = $("#ppStart").value; pr.end = $("#ppEnd").value;
+    pr.guests = $("#ppGuests").value; pr.notes = $("#ppNotes").value;
+    pr.agreeRules = $("#ppAgree").checked; pr.agreeDeposit = $("#ppDeposit").checked;
+  }
+  const host = $("#ppPreview"); if (!host) return;
+  const ev = evaluatePoolParty({ date: pr.date, start: pr.start, end: pr.end, guests: pr.guests });
+  let html = "";
+  if (ev.conflict) html += `<div class="notice info">Another party is already requested/approved for ${fmtDate(pr.date)} — the board will check combined capacity.</div>`;
+  if (!pr.date && !pr.guests) { host.innerHTML = html; return; }
+  if (ev.ok) html += `<div class="notice good">✅ Looks good — this will go to the board for approval.</div>`;
+  else html += `<div class="notice warn">Please fix:<ul style="margin:6px 0 0 18px;padding:0;">${ev.issues.map(i => `<li>${escapeHtml(i)}</li>`).join("")}</ul></div>`;
+  host.innerHTML = html;
+}
+
+function doSubmitPoolParty() {
+  const u = currentUser();
+  const pr = state.party || {};
+  const ev = evaluatePoolParty({ date: pr.date, start: pr.start, end: pr.end, guests: pr.guests });
+  if (!ev.ok) { alert("Please fix:\n• " + ev.issues.join("\n• ")); return; }
+  if (!pr.agreeRules || !pr.agreeDeposit) { alert("Please acknowledge the pool rules and the deposit requirement."); return; }
+  submitPoolParty({ ownerId: u.id, date: pr.date, start: pr.start, end: pr.end, guests: pr.guests, notes: pr.notes });
+  state.party = null;
+  openModal(`
+    <h3>⏳ Request submitted</h3>
+    <div class="notice info">Your pool-party request was sent to the board. You'll be notified by email once it's reviewed. The $${CONFIG.POOL.DEPOSIT} deposit is due with the request.</div>
+    <button class="btn-primary btn-block" onclick="closeModal(); render();">View my requests</button>
+  `);
 }
 
 function renderResidentVehicles() {
@@ -1455,9 +1652,36 @@ function renderUnknownPlates() {
 
 function renderAdminQueue() {
   const pending = db.permits.filter(p => p.status === "pending");
+  const pendingParties = db.poolParties.filter(p => p.status === "pending");
   const host = $("#atab-queue");
-  if (pending.length === 0) { host.innerHTML = `<div class="card"><div class="empty">No permits awaiting approval. 🎉</div></div>`; return; }
-  host.innerHTML = pending.map(p => {
+  if (pending.length === 0 && pendingParties.length === 0) {
+    host.innerHTML = `<div class="card"><div class="empty">Nothing awaiting approval. 🎉</div></div>`; return;
+  }
+
+  let html = "";
+  if (pendingParties.length) {
+    html += `<h2 style="margin-top:0;">Pool parties</h2>` + pendingParties.map(p => {
+      const owner = getOwner(p.requested_by);
+      const ev = evaluatePoolParty({ date: p.date, start: p.start_time, end: p.end_time, guests: p.guest_count, ignoreId: p.id });
+      return `<div class="card">
+        <div class="row spread">
+          <div><strong>${escapeHtml(owner.name)}</strong><div class="meta">${escapeHtml(owner.unit)}</div></div>
+          <span class="pill amber">Pool party</span>
+        </div>
+        <div class="meta" style="margin-top:8px;">${fmtDate(p.date)} · ${fmtTime(p.start_time)}–${fmtTime(p.end_time)} · ${p.guest_count} people · $${CONFIG.POOL.DEPOSIT} deposit</div>
+        ${p.notes ? `<div class="notice info">“${escapeHtml(p.notes)}”</div>` : ""}
+        ${ev.conflict ? `<div class="notice warn">Another party is requested/approved for this date — confirm combined capacity stays within ${CONFIG.POOL.CAPACITY}.</div>` : ""}
+        ${!ev.ok ? `<div class="notice warn">Outside policy:<ul style="margin:6px 0 0 18px;padding:0;">${ev.issues.map(i => `<li>${escapeHtml(i)}</li>`).join("")}</ul></div>` : ""}
+        <div class="grid2">
+          <button class="btn-primary" onclick="decidePartyPrompt('${p.id}','approve')">Approve</button>
+          <button class="btn-danger" onclick="decidePartyPrompt('${p.id}','deny')">Deny</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  if (pending.length) html += `<h2${pendingParties.length ? "" : ' style="margin-top:0;"'}>Guest permits</h2>`;
+  html += pending.map(p => {
     const owner = getOwner(p.requested_by);
     const ev = evaluatePermit({ plate: p.plate, ownerId: p.requested_by, startISO: p.start_date, endISO: p.end_date });
     return `<div class="card">
@@ -1475,6 +1699,21 @@ function renderAdminQueue() {
       <button class="btn-ghost btn-block btn-sm" style="margin-top:8px;" onclick="modifyPermitPrompt('${p.id}')">Approve with shorter duration…</button>
     </div>`;
   }).join("");
+  host.innerHTML = html;
+}
+
+function decidePartyPrompt(id, decision) {
+  const p = db.poolParties.find(x => x.id === id);
+  if (!p) return;
+  const owner = getOwner(p.requested_by);
+  const isApprove = decision === "approve";
+  openModal(`
+    <h3>${isApprove ? "Approve" : "Deny"} pool party</h3>
+    <p class="muted">${escapeHtml(owner.name)} · ${fmtDate(p.date)} · ${fmtTime(p.start_time)}–${fmtTime(p.end_time)} · ${p.guest_count} people</p>
+    <label class="field"><span>${isApprove ? "Comment (optional)" : "Reason (sent to the resident)"}</span><textarea id="ppDecComment" placeholder="${isApprove ? "e.g. Deposit received — enjoy!" : "e.g. Date conflicts with scheduled maintenance."}"></textarea></label>
+    <button class="btn-${isApprove ? "primary" : "danger"} btn-block" onclick="(function(){ var c=(($('#ppDecComment').value)||'').trim(); if(${isApprove ? "false" : "true"} && !c){ alert('Please give a reason.'); return; } decidePoolParty('${id}','${decision}',c); closeModal(); render(); })()">${isApprove ? "Approve" : "Deny"}</button>
+    <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
+  `);
 }
 
 function modifyPermitPrompt(permitId) {
@@ -1668,6 +1907,9 @@ window.calMove = calMove;
 window.inviteRenter = inviteRenter;
 window.confirmEndLease = confirmEndLease;
 window.endLease = endLease;
+window.doSubmitPoolParty = doSubmitPoolParty;
+window.decidePoolParty = decidePoolParty;
+window.decidePartyPrompt = decidePartyPrompt;
 window.closeModal = closeModal;
 window.state = state;
 window.render = render;
