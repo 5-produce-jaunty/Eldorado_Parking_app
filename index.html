@@ -8,27 +8,27 @@
 <style>
   /* ---------- Design tokens ---------- */
   :root {
-    /* Mediterranean palette — terracotta, beige, light brown, off-white */
-    --bg: #f6efe3;          /* warm cream background */
-    --bg-elev: #fffaf2;     /* card surface (warm off-white) */
-    --bg-elev-2: #f0e6d6;   /* secondary surface / tan */
-    --line: #e2d4bd;        /* warm border */
-    --text: #3a2e23;        /* dark warm brown */
-    --text-dim: #6f6051;    /* muted brown */
-    --text-faint: #9c8b78;  /* faint brown */
-    --accent: #c15f3c;      /* terracotta tile */
-    --accent-press: #a44d2e;
-    --green: #6f9c54;       /* olive / sage (good) */
-    --green-bg: #e9f0df;
-    --red: #c0432f;         /* brick red (danger) */
-    --red-bg: #f7e3dd;
-    --amber: #d79a2b;       /* gold (pending) */
-    --amber-bg: #f7ecd1;
+    /* Mediterranean palette — whitewash + sand + terracotta, tuned for contrast */
+    --bg: #e9dec9;          /* sand background (so white cards pop) */
+    --bg-elev: #ffffff;     /* crisp white card surface */
+    --bg-elev-2: #f1e8d7;   /* secondary surface / tan chips */
+    --line: #d6c5a6;        /* warm border */
+    --text: #2a211a;        /* near-black warm brown (high contrast) */
+    --text-dim: #574a3c;    /* readable muted brown */
+    --text-faint: #897760;  /* faint brown */
+    --accent: #c2562f;      /* terracotta tile */
+    --accent-press: #a3461f;
+    --green: #5a8a3c;       /* olive (good) */
+    --green-bg: #e2efd3;
+    --red: #c0392b;         /* brick red (danger) */
+    --red-bg: #f6dcd2;
+    --amber: #d39524;       /* gold (pending) */
+    --amber-bg: #f7eccf;
     /* graduated strike severity: 1 = yellow, 2 = orange, 3 = red */
-    --yellow: #e7b53b;
-    --yellow-bg: #fbf0cd;
-    --orange: #db7a2e;
-    --orange-bg: #f8e3cd;
+    --yellow: #e0a92e;
+    --yellow-bg: #f5e7b8;
+    --orange: #d2691e;
+    --orange-bg: #f7ddc2;
     --radius: 14px;
     --tap: 52px;
   }
@@ -132,12 +132,12 @@
     font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
     border: 1px solid var(--line);
   }
-  .pill.green { background: var(--green-bg); color: #426b2f; border-color: #c3d8ac; }
-  .pill.red { background: var(--red-bg); color: #a8331f; border-color: #e8c0b4; }
-  .pill.amber { background: var(--amber-bg); color: #8a6412; border-color: #e8d3a0; }
-  .pill.yellow { background: var(--yellow-bg); color: #8f6c15; border-color: #ecd99e; }
-  .pill.orange { background: var(--orange-bg); color: #b35d20; border-color: #eec39e; }
-  .pill.gray { background: var(--bg-elev-2); color: var(--text-dim); }
+  .pill.green { background: var(--green-bg); color: #2f6b22; border-color: #9cc77f; }
+  .pill.red { background: var(--red-bg); color: #97271a; border-color: #e0a394; }
+  .pill.amber { background: var(--amber-bg); color: #7a5610; border-color: #ddc486; }
+  .pill.yellow { background: var(--yellow-bg); color: #7d5b10; border-color: #d9c06a; }
+  .pill.orange { background: var(--orange-bg); color: #944213; border-color: #e6b483; }
+  .pill.gray { background: var(--bg-elev-2); color: var(--text-dim); border-color: var(--line); }
 
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
   .dot.green { background: var(--green); } .dot.red { background: var(--red); } .dot.amber { background: var(--amber); } .dot.gray { background: var(--text-faint); }
@@ -148,8 +148,8 @@
     border-radius: var(--radius); padding: 16px; margin-top: 14px;
     border: 2px solid var(--line);
   }
-  .status.ok { background: linear-gradient(160deg, #eef4e4, #e6efd9); border-color: #bcd3a4; }
-  .status.bad { background: linear-gradient(160deg, #f8e6df, #f3dad0); border-color: #e6b9a6; }
+  .status.ok { background: linear-gradient(160deg, #e6f1d6, #dcebc8); border-color: #a9cf86; }
+  .status.bad { background: linear-gradient(160deg, #f7e0d6, #f2d2c5); border-color: #e3a48f; }
   .status .big { font-size: 22px; font-weight: 800; margin: 8px 0 2px; }
   .status .sub { color: var(--text-dim); font-size: 13px; }
 
@@ -202,9 +202,9 @@
   .rule-btn small { display: block; color: var(--text-faint); font-weight: 500; font-size: 12px; }
 
   .notice { font-size: 13px; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
-  .notice.info { background: #eaf1f4; border: 1px solid #cde0e8; color: #3c5d6b; }
-  .notice.warn { background: var(--amber-bg); border: 1px solid #e8d3a0; color: #8a6412; }
-  .notice.good { background: var(--green-bg); border: 1px solid #c3d8ac; color: #426b2f; }
+  .notice.info { background: #e3eef3; border: 1px solid #c2dae5; color: #2f5666; }
+  .notice.warn { background: var(--amber-bg); border: 1px solid #ddc486; color: #7a5610; }
+  .notice.good { background: var(--green-bg); border: 1px solid #9cc77f; color: #2f6b22; }
 
   .tablerow { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
   .seg { display: inline-flex; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 3px; flex-wrap: wrap; }
