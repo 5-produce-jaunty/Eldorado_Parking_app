@@ -128,6 +128,7 @@
     padding: 12px; min-height: var(--tap);
   }
   textarea { min-height: 84px; resize: vertical; }
+  input[type="date"], input[type="time"] { -webkit-appearance: none; appearance: none; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .grid2 > * { min-width: 0; } /* let grid cells shrink so inputs don't overflow/overlap */
 
@@ -1341,10 +1342,8 @@ function renderResidentPool() {
       <h2 style="margin-top:0;">Reserve the pool gazebo</h2>
       <div class="notice info">Reserves the <strong>gazebo area</strong> for your party. The pool/spa stay open to other residents up to the ${P.CAPACITY}-person capacity. Every request goes to the board for approval.</div>
       <label class="field"><span>Date</span><input id="ppDate" type="date" min="${earliest}" value="${pr.date}"></label>
-      <div class="grid2">
-        <label class="field"><span>Start</span><input id="ppStart" type="time" value="${pr.start}"></label>
-        <label class="field"><span>End</span><input id="ppEnd" type="time" value="${pr.end}"></label>
-      </div>
+      <label class="field"><span>Start time</span><input id="ppStart" type="time" value="${pr.start}"></label>
+      <label class="field"><span>End time (max ${P.MAX_HOURS}h, by ${fmtTime(P.LATEST_END)})</span><input id="ppEnd" type="time" value="${pr.end}"></label>
       <label class="field"><span>People attending (max ${P.CAPACITY}, including you)</span><input id="ppGuests" type="number" inputmode="numeric" min="1" max="${P.CAPACITY}" value="${pr.guests}"></label>
       <label class="field"><span>Notes (type of party, etc.)</span><textarea id="ppNotes" placeholder="Optional">${escapeHtml(pr.notes || "")}</textarea></label>
 
@@ -1367,13 +1366,13 @@ function renderResidentPool() {
     </div>
     ${mine.length ? `<h2>My reservations</h2><div class="card">${listHtml}</div>` : ""}
   `;
-  // Times auto-clamp to the allowed window; other fields just refresh the preview.
-  $("#ppStart").addEventListener("change", () => clampPartyTimes("start"));
-  $("#ppEnd").addEventListener("change", () => clampPartyTimes("end"));
+  // The end time is bounded to the allowed window (start is never moved to fit it).
+  $("#ppStart").addEventListener("change", updatePartyTimes);
+  $("#ppEnd").addEventListener("change", updatePartyTimes);
   ["ppDate", "ppGuests", "ppNotes", "ppAgree", "ppDeposit"].forEach(id => {
     const el = $("#" + id); if (el) el.addEventListener("input", previewPoolParty);
   });
-  clampPartyTimes("start"); // normalize the initial window
+  updatePartyTimes(); // set bounds + normalize on load
 }
 
 function hhmmOf(min) {
@@ -1381,27 +1380,22 @@ function hhmmOf(min) {
   return String(Math.floor(min / 60)).padStart(2, "0") + ":" + String(min % 60).padStart(2, "0");
 }
 
-/* Keep the party inside [open, close] and <= MAX_HOURS automatically,
-   so the user never has to "fix" the time — it self-corrects. */
-function clampPartyTimes(changed) {
+/* Start is anchored to whatever the host picks (only bounded to pool hours).
+   The End picker's selectable range is limited to (start … start+3h, capped at
+   8pm) so anything past the max is greyed out — the start never shifts. */
+function updatePartyTimes() {
   const P = CONFIG.POOL, maxLen = P.MAX_HOURS * 60;
   const open = minutesOf(P.EARLIEST_START), close = minutesOf(P.LATEST_END);
   const sEl = $("#ppStart"), eEl = $("#ppEnd");
   if (!sEl || !eEl) return;
   let s = minutesOf(sEl.value || "14:00"), e = minutesOf(eEl.value || "17:00");
 
-  if (changed === "end") {
-    e = Math.min(Math.max(e, open + 30), close);
-    let dur = e - s;
-    if (dur <= 0 || dur > maxLen) s = Math.max(open, e - maxLen);
-  } else {
-    s = Math.min(Math.max(s, open), close - 30);
-    let dur = e - s;
-    if (dur <= 0) dur = maxLen;
-    if (dur > maxLen) dur = maxLen;
-    e = Math.min(s + dur, close);
-  }
+  s = Math.min(Math.max(s, open), close - 30); // start within pool hours only
+  const eMax = Math.min(s + maxLen, close);
+  if (e > eMax || e <= s) e = eMax;            // end follows; start untouched
 
+  sEl.min = hhmmOf(open); sEl.max = hhmmOf(close - 30);
+  eEl.min = hhmmOf(s); eEl.max = hhmmOf(eMax); // greys out times past the max
   sEl.value = hhmmOf(s); eEl.value = hhmmOf(e);
   if (state.party) { state.party.start = sEl.value; state.party.end = eEl.value; }
   previewPoolParty();
