@@ -266,12 +266,14 @@
       <button data-rtab="request">Request permit</button>
       <button data-rtab="violations">My violations</button>
       <button data-rtab="vehicles">My vehicles</button>
+      <button data-rtab="renter">Renter</button>
     </div>
 
     <div id="rtab-permits"></div>
     <div id="rtab-request"></div>
     <div id="rtab-violations"></div>
     <div id="rtab-vehicles"></div>
+    <div id="rtab-renter"></div>
   </section>
 
   <!-- ============ ADMIN ============ -->
@@ -335,6 +337,8 @@ const db = {
     { id: "h3", name: "Priya Nair",     unit: "Unit 5 · 98 Cedar Ln",    email: "priya.nair@example.com",     phone: "408-555-0105", role: "resident" },
     { id: "a1", name: "Dolores Reyes",  unit: "Unit 1 · 100 Main St",    email: "board.reyes@example.com",    phone: "408-555-0100", role: "admin",  patrol: true  },
     { id: "a2", name: "Tom Becker",     unit: "Unit 3 · 104 Main St",    email: "board.becker@example.com",   phone: "408-555-0103", role: "admin",  patrol: false },
+    // Renter sponsored by Priya (h3): Priya's unit is leased out, so her parking is paused.
+    { id: "t1", name: "Sam Carter",     unit: "Unit 5 · 98 Cedar Ln",    email: "sam.carter@example.com",     phone: "408-555-0150", role: "renter", sponsor_id: "h3", lease_end: daysFromToday(120), active: true },
   ],
 
   vehicles: [
@@ -343,6 +347,7 @@ const db = {
     { plate: "6GHJ789", state: "CA", make: "Ford",     model: "F-150",    color: "Black",  homeowner_id: "h2" },
     { plate: "5KLM222", state: "CA", make: "Tesla",    model: "Model 3",  color: "White",  homeowner_id: "h3" },
     { plate: "9NOP000", state: "NV", make: "Chevrolet",model: "Malibu",   color: "Gray",   homeowner_id: null }, // unknown
+    { plate: "4REN777", state: "CA", make: "Subaru",   model: "Outback",  color: "Green",  homeowner_id: "t1" }, // renter Sam's car
   ],
 
   rules: [
@@ -438,6 +443,25 @@ function ownerOfPlate(plate) {
 function vehicleOfPlate(plate) { return db.vehicles.find(v => v.plate === plate) || null; }
 function currentUser() { return getOwner(state.actingAs); }
 function isAdmin() { const u = currentUser(); return u && u.role === "admin"; }
+
+/* ----- Renters: a renter is a person tied to a sponsoring homeowner's unit ----- */
+function isRenter(p) { return !!p && p.role === "renter"; }
+function isRenterActive(r) { return isRenter(r) && r.active && r.lease_end >= todayISO; }
+function rentersOf(ownerId) { return db.homeowners.filter(h => isRenter(h) && h.sponsor_id === ownerId); }
+function activeRenterFor(ownerId) { return rentersOf(ownerId).find(isRenterActive) || null; }
+function sponsorOf(renter) { return renter && renter.sponsor_id ? getOwner(renter.sponsor_id) : null; }
+function daysUntil(iso) { return Math.max(0, daysBetweenInclusive(todayISO, iso) - 1); }
+
+/* Auto-expire renter access whose lease end date has passed (runs at boot). */
+function expireRenters() {
+  db.homeowners.filter(h => isRenter(h) && h.active && h.lease_end < todayISO).forEach(r => {
+    r.active = false;
+    const sp = sponsorOf(r);
+    logAudit({ entity_type: "renter", entity_id: r.id, action: "renter_access_expired",
+      channel: "email", recipient: r.email,
+      detail: `Renter access for ${r.name} ended automatically (lease ended ${fmtDate(r.lease_end)}). ${sp ? sp.name + "'s" : "Owner's"} parking access resumed.` });
+  });
+}
 
 function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, c =>
@@ -806,25 +830,45 @@ function confirmViolation(plate, ruleId) {
 /* ---------- RESIDENT ---------- */
 function renderResident() {
   const u = currentUser();
+  const renterMode = isRenter(u);
   $("#residentHello").textContent = `${u.name.split(" ")[0]}'s Parking`;
+
+  // The "Renter" management tab is for owners only.
+  const renterTabBtn = document.querySelector('#residentTabs button[data-rtab="renter"]');
+  if (renterTabBtn) renterTabBtn.hidden = renterMode;
+  if (renterMode && state.rtab === "renter") state.rtab = "permits";
+
   document.querySelectorAll('#residentTabs button').forEach(b =>
     b.classList.toggle("active", b.dataset.rtab === state.rtab));
-  ["permits", "request", "violations", "vehicles"].forEach(t =>
+  ["permits", "request", "violations", "vehicles", "renter"].forEach(t =>
     $("#rtab-" + t).style.display = t === state.rtab ? "block" : "none");
 
   if (state.rtab === "permits") renderResidentPermits();
   if (state.rtab === "request") renderRequestForm();
   if (state.rtab === "violations") renderResidentViolations();
   if (state.rtab === "vehicles") renderResidentVehicles();
+  if (state.rtab === "renter") renderRenterManage();
+}
+
+/* Banner shown on parking tabs when an owner's unit is leased out. */
+function unitPausedHtml(renter) {
+  return `<div class="card"><div class="notice warn">🔑 This unit is leased to <strong>${escapeHtml(renter.name)}</strong> through ${fmtDate(renter.lease_end)}. They manage the unit's parking while the lease is active. Open the <strong>Renter</strong> tab to view or end the lease.</div></div>`;
+}
+
+/* Small banner shown to a renter so they know which unit/lease they're on. */
+function renterLeaseHtml(u) {
+  return `<div class="card"><div class="notice info">🔑 You're renting <strong>${escapeHtml(u.unit)}</strong>. Lease ends ${fmtDate(u.lease_end)} (${daysUntil(u.lease_end)} day(s) left). Access ends automatically then.</div></div>`;
 }
 
 function renderResidentPermits() {
   const u = currentUser();
+  const renter = activeRenterFor(u.id);
   const mine = db.permits.filter(p => p.requested_by === u.id)
     .sort((a, b) => (a.start_date < b.start_date ? 1 : -1));
   const host = $("#rtab-permits");
-  if (mine.length === 0) { host.innerHTML = `<div class="card"><div class="empty">No permits yet. Tap “Request permit”.</div></div>`; return; }
-  host.innerHTML = `<div class="card">` + mine.map(p => `
+  const banner = isRenter(u) ? renterLeaseHtml(u) : (renter ? unitPausedHtml(renter) : "");
+  if (mine.length === 0) { host.innerHTML = banner + `<div class="card"><div class="empty">No permits yet. Tap “Request permit”.</div></div>`; return; }
+  host.innerHTML = banner + `<div class="card">` + mine.map(p => `
     <div class="listitem">
       <div class="row spread">
         <span class="plate">${escapeHtml(p.plate)}</span>
@@ -911,6 +955,8 @@ function calMove(delta) {
 
 function renderRequestForm() {
   const u = currentUser();
+  const renter = activeRenterFor(u.id);
+  if (renter) { $("#rtab-request").innerHTML = unitPausedHtml(renter); return; }
   const opts = vehiclesOf(u.id).map(v =>
     `<option value="${escapeHtml(v.plate)}">${escapeHtml(v.plate)} — ${escapeHtml(v.make + " " + v.model)}</option>`).join("");
   if (!state.picker || !state.picker.start) {
@@ -993,9 +1039,28 @@ function renderResidentViolations() {
 
 function renderResidentVehicles() {
   const u = currentUser();
-  const mine = vehiclesOf(u.id);
+  const renter = activeRenterFor(u.id);
   const host = $("#rtab-vehicles");
+
+  // Owner with a leased unit: read-only list, no add/remove (renter manages parking).
+  if (renter) {
+    const mine = vehiclesOf(u.id);
+    host.innerHTML = unitPausedHtml(renter) + `<div class="card">${
+      mine.length ? mine.map(v => `
+        <div class="listitem">
+          <div class="row spread">
+            <span class="plate">${escapeHtml(v.plate)}</span>
+            <span class="meta">${strikeCountForPlate(v.plate)} active strike(s)</span>
+          </div>
+          <div class="meta">${escapeHtml(`${v.color} ${v.make} ${v.model} · ${v.state}`)}</div>
+        </div>`).join("") : `<div class="empty">No vehicles on file.</div>`
+    }</div>`;
+    return;
+  }
+
+  const mine = vehiclesOf(u.id);
   host.innerHTML = `
+    ${isRenter(u) ? renterLeaseHtml(u) : ""}
     <div class="card">
       ${mine.length ? mine.map(v => `
         <div class="listitem">
@@ -1086,6 +1151,94 @@ function purgeExpiredVehicles() {
   cutoff.setDate(cutoff.getDate() - CONFIG.VEHICLE_RETENTION_DAYS);
   const cutoffISO = cutoff.toISOString().slice(0, 10);
   db.vehicles = db.vehicles.filter(v => !(v.deleted_at && v.deleted_at.slice(0, 10) < cutoffISO));
+}
+
+/* ---------- RENTER management (owner-facing) ---------- */
+function renderRenterManage() {
+  const u = currentUser();
+  const host = $("#rtab-renter");
+  const renters = rentersOf(u.id);
+  const active = renters.find(isRenterActive);
+
+  let html = `<div class="card"><div class="notice info">Invite the person renting your unit. While their lease is active, <strong>they</strong> manage this unit's parking (permits &amp; vehicles) and your own resident parking is paused. Access ends automatically on the lease end date.</div></div>`;
+
+  if (active) {
+    html += `<div class="card">
+      <div class="row spread">
+        <strong>${escapeHtml(active.name)}</strong>
+        <span class="pill green"><span class="dot green"></span>Active lease</span>
+      </div>
+      <div class="meta">${escapeHtml(active.email)}${active.phone ? " · " + escapeHtml(active.phone) : ""}</div>
+      <div class="meta">Lease ends ${fmtDate(active.lease_end)} · ${daysUntil(active.lease_end)} day(s) left</div>
+      <button class="btn-danger btn-block" style="margin-top:12px;" onclick="confirmEndLease('${active.id}')">End lease &amp; revoke access</button>
+    </div>`;
+  } else {
+    html += `<div class="card">
+      <h2 style="margin-top:0;">Invite a renter</h2>
+      <label class="field"><span>Full name</span><input id="rnName" placeholder="Jordan Lee"></label>
+      <label class="field"><span>Email</span><input id="rnEmail" type="email" placeholder="jordan@example.com"></label>
+      <label class="field"><span>Phone (optional)</span><input id="rnPhone" placeholder="408-555-0190"></label>
+      <label class="field"><span>Lease end date</span><input id="rnLeaseEnd" type="date" value="${daysFromToday(180)}" min="${daysFromToday(1)}"></label>
+      <button class="btn-primary btn-block" onclick="inviteRenter()">Send invite</button>
+    </div>`;
+  }
+
+  const past = renters.filter(r => !isRenterActive(r));
+  if (past.length) {
+    html += `<div class="card"><h2 style="margin-top:0;">Past renters</h2>` + past.map(r => `
+      <div class="listitem">
+        <div class="row spread"><strong>${escapeHtml(r.name)}</strong><span class="pill gray">ended ${fmtDate(r.lease_end)}</span></div>
+        <div class="meta">${escapeHtml(r.email)}</div>
+      </div>`).join("") + `</div>`;
+  }
+  host.innerHTML = html;
+}
+
+function inviteRenter() {
+  const u = currentUser();
+  const name = ($("#rnName").value || "").trim();
+  const email = ($("#rnEmail").value || "").trim();
+  const leaseEnd = $("#rnLeaseEnd").value;
+  if (!name || !email) { alert("Name and email are required."); return; }
+  if (!leaseEnd || leaseEnd < todayISO) { alert("Enter a valid lease end date."); return; }
+  const r = {
+    id: uid("t"), name, unit: u.unit, email, phone: ($("#rnPhone").value || "").trim(),
+    role: "renter", sponsor_id: u.id, lease_end: leaseEnd, active: true,
+  };
+  db.homeowners.push(r);
+  logAudit({ entity_type: "renter", entity_id: r.id, action: "renter_invited",
+    channel: "email", recipient: email,
+    detail: `${u.name} invited ${name} as renter of ${u.unit} (lease ends ${fmtDate(leaseEnd)}). Renter's parking access is now active; owner's is paused until the lease ends.` });
+  buildRoleSelect();
+  openModal(`
+    <h3>✅ Renter invited</h3>
+    <div class="notice good">${escapeHtml(name)} now has parking access for ${escapeHtml(u.unit)} through ${fmtDate(leaseEnd)}. An invite was emailed to ${escapeHtml(email)}. Your resident parking is paused until the lease ends.</div>
+    <button class="btn-primary btn-block" onclick="closeModal(); render();">Done</button>
+  `);
+}
+
+function confirmEndLease(id) {
+  const r = getOwner(id);
+  openModal(`
+    <h3>End lease?</h3>
+    <p class="muted">${escapeHtml(r.name)} — ${escapeHtml(r.unit)}</p>
+    <div class="notice info">Their access ends immediately and your resident parking resumes. Their vehicles and history are retained.</div>
+    <button class="btn-danger btn-block" onclick="endLease('${id}')">End lease now</button>
+    <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
+  `);
+}
+
+function endLease(id) {
+  const r = getOwner(id);
+  if (!r) return;
+  r.active = false;
+  if (r.lease_end >= todayISO) r.lease_end = todayISO; // mark ended today if cut short
+  logAudit({ entity_type: "renter", entity_id: r.id, action: "renter_access_ended",
+    channel: "email", recipient: r.email,
+    detail: `Lease ended early by ${currentUser().name}. ${r.name}'s parking access revoked; owner's access resumed.` });
+  buildRoleSelect();
+  closeModal();
+  render();
 }
 
 /* ---------- ADMIN ---------- */
@@ -1216,10 +1369,16 @@ function renderAdminOwners() {
   $("#atab-owners").innerHTML = db.homeowners.map(h => {
     const plates = vehiclesOf(h.id);
     const strikes = strikeCountForOwner(h.id);
+    const rolePill = h.role === "admin" ? `<span class="pill gray">${h.patrol ? "patrol" : "admin"}</span>`
+      : isRenter(h) ? `<span class="pill ${isRenterActive(h) ? "amber" : "gray"}">renter${isRenterActive(h) ? "" : " · ended"}</span>` : "";
+    const sp = isRenter(h) ? sponsorOf(h) : null;
     return `<div class="card">
       <div class="row spread">
-        <div><strong>${escapeHtml(h.name)}</strong> ${h.role === "admin" ? `<span class="pill gray">${h.patrol ? "patrol" : "admin"}</span>` : ""}
-          <div class="meta">${escapeHtml(h.unit)} · ${escapeHtml(h.email)}</div></div>
+        <div><strong>${escapeHtml(h.name)}</strong> ${rolePill}
+          <div class="meta">${escapeHtml(h.unit)} · ${escapeHtml(h.email)}</div>
+          ${isRenter(h) ? `<div class="meta">Renting from ${escapeHtml(sp ? sp.name : "?")} · lease ${isRenterActive(h) ? "ends" : "ended"} ${fmtDate(h.lease_end)}</div>` : ""}
+          ${!isRenter(h) && activeRenterFor(h.id) ? `<div class="meta">🔑 Leased to ${escapeHtml(activeRenterFor(h.id).name)} (parking paused)</div>` : ""}
+        </div>
         <span class="pill ${strikes >= 3 ? "red" : strikes >= 1 ? "amber" : "gray"}">${strikes} strike(s)</span>
       </div>
       <div class="meta" style="margin-top:8px;">Vehicles: ${plates.length ? plates.map(p => `<span class="plate" style="font-size:12px;">${escapeHtml(p.plate)}</span>`).join(" ") : "none"}</div>
@@ -1248,19 +1407,29 @@ function openModal(html) { $("#modalBody").innerHTML = html; $("#modalBg").class
 function closeModal() { $("#modalBg").classList.remove("open"); $("#modalBody").innerHTML = ""; }
 $("#modalBg").addEventListener("click", e => { if (e.target === $("#modalBg")) closeModal(); });
 
+function roleTag(h) {
+  if (h.role === "admin") return h.patrol ? "patrol/admin" : "admin";
+  if (h.role === "renter") return "renter";
+  return "resident";
+}
+
 function buildRoleSelect() {
   const sel = $("#roleSelect");
-  sel.innerHTML = db.homeowners.map(h =>
-    `<option value="${h.id}">${escapeHtml(h.name)} (${h.role === "admin" ? (h.patrol ? "patrol/admin" : "admin") : "resident"})</option>`
+  // Show all owners/admins, plus only renters whose lease is still active.
+  const people = db.homeowners.filter(h => !isRenter(h) || isRenterActive(h));
+  sel.innerHTML = people.map(h =>
+    `<option value="${h.id}">${escapeHtml(h.name)} (${roleTag(h)})</option>`
   ).join("");
+  if (!people.some(h => h.id === state.actingAs)) state.actingAs = people[0].id;
   sel.value = state.actingAs;
-  sel.addEventListener("change", () => {
+  sel.onchange = () => {
     state.actingAs = sel.value;
     // sensible default screen per role
     const u = currentUser();
     state.screen = (u.role === "admin") ? (u.patrol ? "patrol" : "admin") : "resident";
+    state.rtab = "permits";
     render();
-  });
+  };
 }
 
 document.querySelectorAll('#bottomNav button').forEach(b =>
@@ -1293,6 +1462,9 @@ window.confirmDeleteVehicle = confirmDeleteVehicle;
 window.doDeleteVehicle = doDeleteVehicle;
 window.pickDay = pickDay;
 window.calMove = calMove;
+window.inviteRenter = inviteRenter;
+window.confirmEndLease = confirmEndLease;
+window.endLease = endLease;
 window.closeModal = closeModal;
 window.state = state;
 window.render = render;
@@ -1301,6 +1473,7 @@ window.$ = $;
 /* boot */
 seedAudit();
 purgeExpiredVehicles();
+expireRenters();
 buildRoleSelect();
 render();
 </script>
