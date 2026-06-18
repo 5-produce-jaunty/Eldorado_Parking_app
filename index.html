@@ -283,12 +283,14 @@
       <button data-atab="queue" class="active">Approvals</button>
       <button data-atab="permits">Permits</button>
       <button data-atab="violations">Violations</button>
+      <button data-atab="unknown">Unknown plates</button>
       <button data-atab="owners">Homeowners</button>
       <button data-atab="audit">Audit log</button>
     </div>
     <div id="atab-queue"></div>
     <div id="atab-permits"></div>
     <div id="atab-violations"></div>
+    <div id="atab-unknown"></div>
     <div id="atab-owners"></div>
     <div id="atab-audit"></div>
   </section>
@@ -408,10 +410,10 @@ function seedAudit() {
   logAudit({ entity_type: "permit", entity_id: "p1", action: "permit_auto_approved",
     channel: "in-app", recipient: "maria.alvarez@example.com",
     detail: "Guest-lot permit auto-approved (within self-serve limits)", at: daysFromToday(-1) + "T18:30" });
-  logAudit({ entity_type: "violation", entity_id: "v3", action: "warning_queued",
-    channel: "email", recipient: "(unlinked plate 9NOP000)",
-    detail: "Strike 1 warning queued — Parking on red curb. Will send when plate is linked.",
-    at: daysFromToday(-3) + "T22:06", delivered: false });
+  logAudit({ entity_type: "violation", entity_id: "v3", action: "notice_posted",
+    channel: "notice", recipient: "Windshield · plate 9NOP000",
+    detail: "Strike 1 — Parking on red curb. No owner on file; windshield notice posted. Strike accrues to the plate.",
+    at: daysFromToday(-3) + "T22:06", delivered: true });
 }
 
 /* =====================================================================
@@ -609,13 +611,13 @@ function strikeLabel(n) {
   return `Strike ${n} · Tow-eligible (admin discretion)`;
 }
 
-function logViolation({ plate, ruleId, location, notes, hasPhoto }) {
+function logViolation({ plate, ruleId, location, notes, photo }) {
   const nextStrike = strikeCountForPlate(plate) + 1;
   const status = nextStrike >= 3 ? "tow-eligible" : (nextStrike === 2 ? "escalated" : "issued");
   const v = {
     id: uid("v"), plate, rule_id: ruleId, location: location || "",
     occurred_at: nowStamp(), logged_by: state.actingAs,
-    photo: hasPhoto ? "photo-attached.jpg" : null,
+    photo: photo || null,
     strike_number: nextStrike, status, notes: notes || "",
   };
   db.violations.push(v);
@@ -630,10 +632,12 @@ function logViolation({ plate, ruleId, location, notes, hasPhoto }) {
       channel: "email", recipient: owner.email, delivered: true,
       detail: `${headline} — ${rule.short_name}. Rule text sent to ${owner.name}.` });
   } else {
-    // Unknown plate: queue notification until linked
-    logAudit({ entity_type: "violation", entity_id: v.id, action: "warning_queued",
-      channel: "email", recipient: `(unlinked plate ${plate})`, delivered: false,
-      detail: `${headline} — ${rule.short_name}. Queued until plate is linked to an owner.` });
+    // No owner on file: enforcement is a physical windshield notice — NOT an email
+    // that waits indefinitely to be "linked". The strike still accrues to the plate,
+    // so an unidentified vehicle still reaches tow-eligibility at strike 3.
+    logAudit({ entity_type: "violation", entity_id: v.id, action: "notice_posted",
+      channel: "notice", recipient: `Windshield · plate ${plate}`, delivered: true,
+      detail: `${headline} — ${rule.short_name}. No owner on file; windshield notice posted. Strike accrues to the plate${nextStrike >= 3 ? " — vehicle is now tow-eligible." : "."}` });
   }
   return v;
 }
@@ -738,18 +742,18 @@ function renderLookup(plate) {
   } else {
     html += `<div class="card">` + recent.map(v => {
       const r = getRule(v.rule_id);
-      return `<div class="listitem">
+      return `<div class="listitem" style="cursor:pointer;" onclick="openViolationDetail('${v.id}')">
         <div class="row spread">
           <strong>#${v.strike_number} · ${escapeHtml(r.short_name)}</strong>
           ${statusPill(v.status)}
         </div>
-        <div class="meta">${fmtDateTime(v.occurred_at)} · ${escapeHtml(v.location || "no location")}</div>
+        <div class="meta">${fmtDateTime(v.occurred_at)} · ${escapeHtml(v.location || "no location")}${v.photo ? " · 📷" : ""} · <span class="link">View ›</span></div>
       </div>`;
     }).join("") + `</div>`;
   }
 
   if (!owner) {
-    html += `<div class="notice warn">⚠ This plate isn't linked to a homeowner. Violations are still logged against the plate; warnings queue until an admin links it.</div>`;
+    html += `<div class="notice warn">⚠ No owner on file for this plate. Place a windshield notice — strikes still accrue to the plate and it becomes tow-eligible at strike 3. If the owner is later identified, an admin can link the plate.</div>`;
   }
 
   html += `<button class="btn-danger btn-block" style="margin-top:6px;" onclick="openLogViolation('${escapeHtml(plate)}')">⚠️ Log Violation</button>`;
@@ -811,20 +815,80 @@ function selectRule(plate, ruleId) {
 function confirmViolation(plate, ruleId) {
   const note = ($("#vNote") && $("#vNote").value || "").trim();
   if (ruleId === "r5" && !note) { alert("A note is required for the general catch-all rule."); return; }
-  const hasPhoto = $("#vPhoto") && $("#vPhoto").files && $("#vPhoto").files.length > 0;
-  const v = logViolation({ plate, ruleId, location: ($("#vLoc") && $("#vLoc").value) || "", notes: note, hasPhoto });
-  const owner = ownerOfPlate(plate);
-  closeModal();
+  const fileInput = $("#vPhoto");
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  const location = ($("#vLoc") && $("#vLoc").value) || "";
+
+  const finish = (photo) => {
+    const v = logViolation({ plate, ruleId, location, notes: note, photo });
+    const owner = ownerOfPlate(plate);
+    closeModal();
+    openModal(`
+      <h3>✅ Violation logged</h3>
+      <div class="notice good">
+        <strong>${escapeHtml(strikeLabel(v.strike_number))}</strong> recorded for <span class="plate">${escapeHtml(plate)}</span>.<br>
+        ${owner ? `Notification emailed to ${escapeHtml(owner.name)} (${escapeHtml(owner.email)}).`
+                : `No owner on file — place a windshield notice on the vehicle. The strike is recorded against the plate.`}
+        ${photo ? "<br>📷 Photo saved to the violation record." : ""}
+      </div>
+      <button class="btn-ghost btn-block" onclick="openViolationDetail('${v.id}')">View violation</button>
+      <button class="btn-primary btn-block" style="margin-top:8px;" onclick="closeModal()">Done</button>
+    `);
+    renderLookup(plate);
+  };
+
+  // Read the captured photo into a data URL so it's stored with the violation.
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = () => finish(reader.result);
+    reader.onerror = () => { alert("Couldn't read the photo; logging without it."); finish(null); };
+    reader.readAsDataURL(file);
+  } else {
+    finish(null);
+  }
+}
+
+/* Full detail view for a single violation — opened by tapping any violation row. */
+function openViolationDetail(violationId) {
+  const v = db.violations.find(x => x.id === violationId);
+  if (!v) return;
+  const r = getRule(v.rule_id);
+  const owner = ownerOfPlate(v.plate);
+  const vehicle = vehicleOfPlate(v.plate);
+  const loggedBy = getOwner(v.logged_by);
+  const admin = isAdmin();
+
   openModal(`
-    <h3>✅ Violation logged</h3>
-    <div class="notice good">
-      <strong>${escapeHtml(strikeLabel(v.strike_number))}</strong> recorded for <span class="plate">${escapeHtml(plate)}</span>.<br>
-      ${owner ? `Notification emailed to ${escapeHtml(owner.name)} (${escapeHtml(owner.email)}).`
-              : `Plate is unlinked — warning queued in the audit log until an admin links it.`}
+    <h3>Violation detail</h3>
+    <div class="row spread" style="margin:4px 0 10px;">
+      <span class="plate lg">${escapeHtml(v.plate)}</span>
+      ${statusPill(v.status)}
     </div>
-    <button class="btn-primary btn-block" onclick="closeModal()">Done</button>
+    <div class="notice ${v.strike_number >= 2 ? "warn" : "info"}"><strong>${escapeHtml(strikeLabel(v.strike_number))}</strong></div>
+
+    ${v.photo
+      ? `<img src="${v.photo}" alt="Violation photo" style="width:100%; border-radius:12px; border:1px solid var(--line); margin:8px 0; display:block;">`
+      : `<div class="card" style="text-align:center; color:var(--text-faint);">No photo attached</div>`}
+
+    <div class="card tight">
+      <div class="row spread"><span class="muted">Rule</span><strong style="text-align:right;">${escapeHtml(r.short_name)}</strong></div>
+      <div class="meta" style="margin-top:8px;">${escapeHtml(r.full_explanation_text)}</div>
+    </div>
+    <div class="card tight">
+      <div class="row spread"><span class="muted">When</span><span>${fmtDateTime(v.occurred_at)}</span></div>
+      <div class="row spread" style="margin-top:8px;"><span class="muted">Where</span><span style="text-align:right;">${escapeHtml(v.location || "—")}</span></div>
+      <div class="row spread" style="margin-top:8px;"><span class="muted">Owner</span><span style="text-align:right;">${owner ? escapeHtml(owner.name) : "Unknown — no owner on file"}</span></div>
+      ${vehicle ? `<div class="row spread" style="margin-top:8px;"><span class="muted">Vehicle</span><span style="text-align:right;">${escapeHtml(`${vehicle.color} ${vehicle.make} ${vehicle.model} · ${vehicle.state}`)}</span></div>` : ""}
+      <div class="row spread" style="margin-top:8px;"><span class="muted">Logged by</span><span style="text-align:right;">${escapeHtml(loggedBy ? loggedBy.name : "—")}</span></div>
+    </div>
+    ${v.notes ? `<div class="card tight"><span class="muted">Notes</span><div style="margin-top:6px;">${escapeHtml(v.notes)}</div></div>` : ""}
+
+    ${admin ? `<div class="row wrap" style="gap:8px; margin-top:4px;">
+      ${v.status !== "resolved" ? `<button class="btn-sm" onclick="closeModal(); overridePrompt('${v.id}','resolved')">Mark resolved</button>` : ""}
+      ${!owner ? `<button class="btn-sm btn-primary" onclick="closeModal(); linkPrompt('${escapeHtml(v.plate)}')">Link plate to owner</button>` : ""}
+    </div>` : ""}
+    <button class="btn-primary btn-block" style="margin-top:10px;" onclick="closeModal()">Close</button>
   `);
-  renderLookup(plate);
 }
 
 /* ---------- RESIDENT ---------- */
@@ -1042,13 +1106,14 @@ function renderResidentViolations() {
   else {
     html += list.map(v => {
       const r = getRule(v.rule_id);
-      return `<div class="card">
+      return `<div class="card" style="cursor:pointer;" onclick="openViolationDetail('${v.id}')">
         <div class="row spread">
           <strong>${escapeHtml(r.short_name)}</strong>${statusPill(v.status)}
         </div>
-        <div class="meta">Strike #${v.strike_number} · ${escapeHtml(v.plate)} · ${fmtDateTime(v.occurred_at)} · ${escapeHtml(v.location || "no location")}</div>
+        <div class="meta">Strike #${v.strike_number} · ${escapeHtml(v.plate)} · ${fmtDateTime(v.occurred_at)} · ${escapeHtml(v.location || "no location")}${v.photo ? " · 📷" : ""}</div>
         <div class="notice info" style="margin-top:10px;">${escapeHtml(r.full_explanation_text)}</div>
         ${v.notes ? `<div class="meta">Note: ${escapeHtml(v.notes)}</div>` : ""}
+        <div class="meta" style="margin-top:8px;"><span class="link">View details ›</span></div>
       </div>`;
     }).join("");
   }
@@ -1263,13 +1328,41 @@ function endLease(id) {
 function renderAdmin() {
   document.querySelectorAll('#adminTabs button').forEach(b =>
     b.classList.toggle("active", b.dataset.atab === state.atab));
-  ["queue", "permits", "violations", "owners", "audit"].forEach(t =>
+  ["queue", "permits", "violations", "unknown", "owners", "audit"].forEach(t =>
     $("#atab-" + t).style.display = t === state.atab ? "block" : "none");
   if (state.atab === "queue") renderAdminQueue();
   if (state.atab === "permits") renderAdminPermits();
   if (state.atab === "violations") renderAdminViolations();
+  if (state.atab === "unknown") renderUnknownPlates();
   if (state.atab === "owners") renderAdminOwners();
   if (state.atab === "audit") renderAdminAudit();
+}
+
+/* Unknown plates: vehicles with violations but no owner on file. These are
+   unlikely to ever be linked, so the board tracks and enforces them here
+   (windshield notices accrue strikes; tow-eligible at strike 3). */
+function renderUnknownPlates() {
+  const host = $("#atab-unknown");
+  const plates = [...new Set(db.violations.map(v => v.plate))].filter(p => !ownerOfPlate(p));
+  if (plates.length === 0) { host.innerHTML = `<div class="card"><div class="empty">No unknown plates. 🎉</div></div>`; return; }
+  host.innerHTML = `<div class="card"><div class="notice info">Plates with violations but <strong>no owner on file</strong>. Enforcement is by windshield notice — strikes still accrue and a plate is tow-eligible at strike 3. Link a plate if the owner is later identified.</div></div>` +
+    plates.map(p => {
+      const vs = violationsForPlate(p);
+      const strikes = strikeCountForPlate(p);
+      const last = vs[0];
+      const towable = strikes >= 3;
+      return `<div class="card">
+        <div class="row spread">
+          <span class="plate">${escapeHtml(p)}</span>
+          <span class="pill ${towable ? "red" : strikes >= 1 ? "amber" : "gray"}">${strikes} strike(s)${towable ? " · TOW-ELIGIBLE" : ""}</span>
+        </div>
+        <div class="meta" style="margin-top:6px;">${vs.length} violation(s) · last seen ${fmtDateTime(last.occurred_at)} · ${escapeHtml(last.location || "no location")}</div>
+        <div class="row wrap" style="gap:8px; margin-top:10px;">
+          <button class="btn-sm btn-ghost" onclick="openViolationDetail('${last.id}')">View latest</button>
+          <button class="btn-sm btn-primary" onclick="linkPrompt('${escapeHtml(p)}')">Link to owner</button>
+        </div>
+      </div>`;
+    }).join("");
 }
 
 function renderAdminQueue() {
@@ -1343,6 +1436,7 @@ function renderAdminViolations() {
         <div class="meta">${escapeHtml(owner ? owner.name : "UNKNOWN owner")} · ${fmtDateTime(v.occurred_at)} · ${escapeHtml(v.location || "no location")}${v.photo ? " · 📷" : ""}</div>
         ${v.notes ? `<div class="meta">Note: ${escapeHtml(v.notes)}</div>` : ""}
         <div class="row wrap" style="margin-top:10px; gap:8px;">
+          <button class="btn-sm btn-ghost" onclick="openViolationDetail('${v.id}')">View ${v.photo ? "📷 " : ""}details</button>
           ${v.status !== "resolved" ? `<button class="btn-sm" onclick="overridePrompt('${v.id}','resolved')">Mark resolved</button>` : ""}
           <button class="btn-sm btn-ghost" onclick="overridePrompt('${v.id}','issued')">Reset to strike 1</button>
           ${!owner ? `<button class="btn-sm btn-primary" onclick="linkPrompt('${escapeHtml(v.plate)}')">Link plate to owner</button>` : ""}
@@ -1373,7 +1467,7 @@ function linkPrompt(plate) {
     <h3>Link plate to owner</h3>
     <p class="muted">Plate <span class="plate">${escapeHtml(plate)}</span></p>
     <label class="field"><span>Homeowner</span><select id="linkOwner">${opts}</select></label>
-    <div class="notice info">Linking flushes any queued warnings for this plate to the owner’s email.</div>
+    <div class="notice info">Linking associates this plate with the owner, so future notices reach them by email and the violation history is attributed to them.</div>
     <button class="btn-primary btn-block" onclick="doLink('${escapeHtml(plate)}')">Link</button>
     <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
   `);
@@ -1411,7 +1505,7 @@ function renderAdminAudit() {
     <div class="listitem">
       <div class="row spread">
         <strong style="font-size:14px;">${escapeHtml(a.action.replace(/_/g, " "))}</strong>
-        <span class="pill ${a.delivered ? "green" : "amber"}">${a.channel}${a.delivered ? " · sent" : " · queued"}</span>
+        <span class="pill ${a.delivered ? "green" : "amber"}">${a.channel}${a.delivered ? (a.channel === "notice" ? " · posted" : " · sent") : " · queued"}</span>
       </div>
       <div class="meta">${fmtDateTime(a.at)} · → ${escapeHtml(a.recipient)}</div>
       <div style="font-size:13px; margin-top:4px;">${escapeHtml(a.detail)}</div>
@@ -1467,6 +1561,7 @@ $("#lookupForm").addEventListener("submit", e => {
 window.openLogViolation = openLogViolation;
 window.selectRule = selectRule;
 window.confirmViolation = confirmViolation;
+window.openViolationDetail = openViolationDetail;
 window.decidePermit = decidePermit;
 window.modifyPermitPrompt = modifyPermitPrompt;
 window.renderAdminViolations = renderAdminViolations;
