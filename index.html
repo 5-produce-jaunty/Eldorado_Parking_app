@@ -3,31 +3,32 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<meta name="theme-color" content="#0b1220" />
+<meta name="theme-color" content="#b0512f" />
 <title>Eldorado Parking &amp; Violations</title>
 <style>
   /* ---------- Design tokens ---------- */
   :root {
-    --bg: #0b1220;
-    --bg-elev: #131c2e;
-    --bg-elev-2: #1b2740;
-    --line: #283651;
-    --text: #e8eef9;
-    --text-dim: #9fb0cc;
-    --text-faint: #6b7d9c;
-    --accent: #4f8cff;
-    --accent-press: #366fe0;
-    --green: #2fbf71;
-    --green-bg: #103325;
-    --red: #ff5a5f;
-    --red-bg: #3a1416;
-    --amber: #ffb020;
-    --amber-bg: #3a2c0a;
+    /* Mediterranean palette — terracotta, beige, light brown, off-white */
+    --bg: #f6efe3;          /* warm cream background */
+    --bg-elev: #fffaf2;     /* card surface (warm off-white) */
+    --bg-elev-2: #f0e6d6;   /* secondary surface / tan */
+    --line: #e2d4bd;        /* warm border */
+    --text: #3a2e23;        /* dark warm brown */
+    --text-dim: #6f6051;    /* muted brown */
+    --text-faint: #9c8b78;  /* faint brown */
+    --accent: #c15f3c;      /* terracotta tile */
+    --accent-press: #a44d2e;
+    --green: #6f9c54;       /* olive / sage (good) */
+    --green-bg: #e9f0df;
+    --red: #c0432f;         /* brick red (danger) */
+    --red-bg: #f7e3dd;
+    --amber: #d79a2b;       /* gold (pending) */
+    --amber-bg: #f7ecd1;
     /* graduated strike severity: 1 = yellow, 2 = orange, 3 = red */
-    --yellow: #ffd23f;
-    --yellow-bg: #3a330a;
-    --orange: #ff8c1a;
-    --orange-bg: #3a230a;
+    --yellow: #e7b53b;
+    --yellow-bg: #fbf0cd;
+    --orange: #db7a2e;
+    --orange-bg: #f8e3cd;
     --radius: 14px;
     --tap: 52px;
   }
@@ -45,17 +46,17 @@
   /* ---------- Top bar (role switcher) ---------- */
   header {
     position: sticky; top: 0; z-index: 30;
-    background: var(--bg-elev);
-    border-bottom: 1px solid var(--line);
+    background: linear-gradient(135deg, #c5683f, #ad4f2d);
+    border-bottom: 1px solid rgba(0,0,0,.14);
     padding: 10px 14px;
     display: flex; align-items: center; gap: 10px;
   }
-  header .brand { font-weight: 700; font-size: 15px; letter-spacing: .2px; }
-  header .brand small { display: block; color: var(--text-faint); font-weight: 500; font-size: 11px; }
+  header .brand { font-weight: 700; font-size: 15px; letter-spacing: .2px; color: #fff8ef; }
+  header .brand small { display: block; color: rgba(255,248,239,.78); font-weight: 500; font-size: 11px; }
   header .role { margin-left: auto; display: flex; align-items: center; gap: 8px; }
   header select {
-    background: var(--bg-elev-2); color: var(--text);
-    border: 1px solid var(--line); border-radius: 10px;
+    background: rgba(255,250,242,.94); color: var(--text);
+    border: 1px solid rgba(255,255,255,.45); border-radius: 10px;
     padding: 9px 10px; font-size: 14px; min-height: 40px;
   }
 
@@ -89,9 +90,9 @@
   .plate {
     font-family: ui-monospace, Menlo, Consolas, monospace;
     font-weight: 700; letter-spacing: 2px;
-    background: #f4f6fb; color: #111;
+    background: #fbf9f4; color: #2a2118;
     border-radius: 8px; padding: 4px 10px; display: inline-block;
-    border: 2px solid #c9d2e3;
+    border: 2px solid #d8c7ac;
   }
   .plate.lg { font-size: 26px; padding: 8px 16px; letter-spacing: 3px; }
 
@@ -118,7 +119,7 @@
   label.field > span { display: block; font-size: 13px; color: var(--text-dim); margin-bottom: 6px; }
   input, select, textarea {
     width: 100%; font: inherit;
-    background: var(--bg-elev-2); color: var(--text);
+    background: var(--bg-elev); color: var(--text);
     border: 1px solid var(--line); border-radius: 12px;
     padding: 12px; min-height: var(--tap);
   }
@@ -131,11 +132,11 @@
     font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
     border: 1px solid var(--line);
   }
-  .pill.green { background: var(--green-bg); color: #67e0a3; border-color: #1d5e42; }
-  .pill.red { background: var(--red-bg); color: #ff8b8e; border-color: #5e1d22; }
-  .pill.amber { background: var(--amber-bg); color: #ffce7a; border-color: #5e4a14; }
-  .pill.yellow { background: var(--yellow-bg); color: #ffe27a; border-color: #5e5214; }
-  .pill.orange { background: var(--orange-bg); color: #ffb061; border-color: #5e3814; }
+  .pill.green { background: var(--green-bg); color: #426b2f; border-color: #c3d8ac; }
+  .pill.red { background: var(--red-bg); color: #a8331f; border-color: #e8c0b4; }
+  .pill.amber { background: var(--amber-bg); color: #8a6412; border-color: #e8d3a0; }
+  .pill.yellow { background: var(--yellow-bg); color: #8f6c15; border-color: #ecd99e; }
+  .pill.orange { background: var(--orange-bg); color: #b35d20; border-color: #eec39e; }
   .pill.gray { background: var(--bg-elev-2); color: var(--text-dim); }
 
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
@@ -147,8 +148,8 @@
     border-radius: var(--radius); padding: 16px; margin-top: 14px;
     border: 2px solid var(--line);
   }
-  .status.ok { background: linear-gradient(160deg, #0f3326, #102a20); border-color: #1f7a52; }
-  .status.bad { background: linear-gradient(160deg, #3a1416, #2c1113); border-color: #7a2a2e; }
+  .status.ok { background: linear-gradient(160deg, #eef4e4, #e6efd9); border-color: #bcd3a4; }
+  .status.bad { background: linear-gradient(160deg, #f8e6df, #f3dad0); border-color: #e6b9a6; }
   .status .big { font-size: 22px; font-weight: 800; margin: 8px 0 2px; }
   .status .sub { color: var(--text-dim); font-size: 13px; }
 
@@ -182,7 +183,7 @@
 
   /* ---------- Modal ---------- */
   .modal-bg {
-    position: fixed; inset: 0; z-index: 50; background: rgba(4,8,16,.66);
+    position: fixed; inset: 0; z-index: 50; background: rgba(48,32,20,.5);
     display: none; align-items: flex-end; justify-content: center;
   }
   .modal-bg.open { display: flex; }
@@ -201,9 +202,9 @@
   .rule-btn small { display: block; color: var(--text-faint); font-weight: 500; font-size: 12px; }
 
   .notice { font-size: 13px; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
-  .notice.info { background: #102036; border: 1px solid #1d3a5e; color: #bcd6ff; }
-  .notice.warn { background: var(--amber-bg); border: 1px solid #5e4a14; color: #ffce7a; }
-  .notice.good { background: var(--green-bg); border: 1px solid #1d5e42; color: #88e6b3; }
+  .notice.info { background: #eaf1f4; border: 1px solid #cde0e8; color: #3c5d6b; }
+  .notice.warn { background: var(--amber-bg); border: 1px solid #e8d3a0; color: #8a6412; }
+  .notice.good { background: var(--green-bg); border: 1px solid #c3d8ac; color: #426b2f; }
 
   .tablerow { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
   .seg { display: inline-flex; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 3px; flex-wrap: wrap; }
@@ -228,9 +229,9 @@
   .cal-day > i { font-style: normal; }
   .cal-day:disabled { color: var(--text-faint); opacity: .28; }
   /* range fill spans the full cell so consecutive days connect visually */
-  .cal-day.inrange { background: rgba(79,140,255,.16); }
+  .cal-day.inrange { background: rgba(193,95,60,.16); }
   .cal-day.start, .cal-day.end {
-    background: rgba(79,140,255,.16);
+    background: rgba(193,95,60,.16);
   }
   .cal-day.start > i, .cal-day.end > i {
     background: var(--accent); color: #fff; font-style: normal;
