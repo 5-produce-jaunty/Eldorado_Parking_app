@@ -404,6 +404,11 @@ const db = {
       start_date: daysFromToday(-12), end_date: daysFromToday(-11),
       status: "expired", approval_type: "auto", created_at: daysFromToday(-12),
       decided_by: null, notes: "" },
+    // Active guest-vehicle permit Maria pulled for a visitor (plate not registered)
+    { id: "p4", plate: "8VIS321", requested_by: "h1", lot_type: "guest-lot",
+      start_date: daysFromToday(0), end_date: daysFromToday(1),
+      status: "active", approval_type: "auto", created_at: daysFromToday(0),
+      decided_by: null, notes: "", is_guest: true, guest_desc: "White Honda Odyssey", guest_state: "CA" },
   ],
 
   violations: [
@@ -558,7 +563,7 @@ function evaluatePermit({ plate, ownerId, startISO, endISO }) {
   return { instant: reasons.length === 0, reasons, duration };
 }
 
-function submitPermitRequest({ plate, ownerId, startISO, endISO, notes }) {
+function submitPermitRequest({ plate, ownerId, startISO, endISO, notes, isGuest, guestDesc, guestState }) {
   const evalResult = evaluatePermit({ plate, ownerId, startISO, endISO });
   const owner = getOwner(ownerId);
   const permit = {
@@ -567,17 +572,19 @@ function submitPermitRequest({ plate, ownerId, startISO, endISO, notes }) {
     status: evalResult.instant ? "active" : "pending",
     approval_type: evalResult.instant ? "auto" : "admin",
     created_at: nowStamp(), decided_by: null, notes: notes || "",
+    is_guest: !!isGuest, guest_desc: guestDesc || "", guest_state: guestState || "",
   };
   db.permits.push(permit);
+  const who = isGuest ? `guest vehicle ${plate}` : `vehicle ${plate}`;
 
   if (evalResult.instant) {
     logAudit({ entity_type: "permit", entity_id: permit.id, action: "permit_auto_approved",
       channel: "in-app", recipient: owner.email,
-      detail: `Guest-lot permit auto-approved (${evalResult.duration} day(s), within self-serve limits).` });
+      detail: `Guest-lot permit for ${who} auto-approved (${evalResult.duration} day(s), within self-serve limits).` });
   } else {
     logAudit({ entity_type: "permit", entity_id: permit.id, action: "permit_requested",
       channel: "in-app", recipient: "Admin queue",
-      detail: `Guest-lot permit needs approval: ${evalResult.reasons.join(" ")}` });
+      detail: `Guest-lot permit for ${who} needs approval: ${evalResult.reasons.join(" ")}` });
   }
   return { permit, evalResult };
 }
@@ -737,8 +744,14 @@ function renderLookup(plate) {
   const owner = ownerOfPlate(plate);
   const vehicle = vehicleOfPlate(plate);
   const recent = violationsForPlate(plate).slice(0, 3);
+  // Permitted guest vehicle with no registered owner: attribute to the sponsor.
+  const guestSponsor = (!owner && permit && permit.is_guest) ? getOwner(permit.requested_by) : null;
 
   const ok = !!permit;
+  const nameLine = owner ? owner.name : guestSponsor ? `Guest of ${guestSponsor.name}` : "Unknown owner";
+  const vehLine = vehicle ? `${vehicle.color} ${vehicle.make} ${vehicle.model} · ${vehicle.state}`
+    : guestSponsor ? ((permit.guest_desc || "Guest vehicle") + (permit.guest_state ? " · " + permit.guest_state : "")) : "Vehicle not on file";
+  const unitLine = owner ? owner.unit : guestSponsor ? guestSponsor.unit : "";
   let html = `
     <div class="status ${ok ? "ok" : "bad"}">
       <div class="row spread">
@@ -747,10 +760,9 @@ function renderLookup(plate) {
           <span class="dot ${ok ? "green" : "red"}"></span>${ok ? "PERMIT ACTIVE" : "NO ACTIVE PERMIT"}
         </span>
       </div>
-      <div class="big">${owner ? escapeHtml(owner.name) : "Unknown owner"}</div>
+      <div class="big">${escapeHtml(nameLine)}${guestSponsor ? ` <span class="pill gray">Guest</span>` : ""}</div>
       <div class="sub">
-        ${vehicle ? escapeHtml(`${vehicle.color} ${vehicle.make} ${vehicle.model} · ${vehicle.state}`) : "Vehicle not on file"}
-        ${owner ? " · " + escapeHtml(owner.unit) : ""}
+        ${escapeHtml(vehLine)}${unitLine ? " · " + escapeHtml(unitLine) : ""}
       </div>
       ${permit ? `<div class="sub" style="margin-top:6px;">Guest-lot permit valid through ${fmtDate(permit.end_date)}</div>` : ""}
       <div class="row" style="margin-top:12px; gap:10px;">
@@ -777,7 +789,9 @@ function renderLookup(plate) {
     }).join("") + `</div>`;
   }
 
-  if (!owner) {
+  if (!owner && guestSponsor) {
+    html += `<div class="notice info">🚗 Guest vehicle sponsored by <strong>${escapeHtml(guestSponsor.name)}</strong> (${escapeHtml(guestSponsor.unit)}) under an active guest-lot permit.</div>`;
+  } else if (!owner) {
     html += `<div class="notice warn">⚠ No owner on file for this plate. Place a windshield notice — strikes still accrue to the plate and it becomes tow-eligible at strike 3. If the owner is later identified, an admin can link the plate.</div>`;
   }
 
@@ -990,10 +1004,11 @@ function renderResidentPermits() {
   host.innerHTML = banner + `<div class="card">` + mine.map(p => `
     <div class="listitem">
       <div class="row spread">
-        <span class="plate">${escapeHtml(p.plate)}</span>
+        <span class="row" style="gap:8px;"><span class="plate">${escapeHtml(p.plate)}</span>${p.is_guest ? `<span class="pill gray">Guest</span>` : ""}</span>
         ${statusPill(p.status)}
       </div>
       <div class="meta">Guest lot · ${fmtDate(p.start_date)} → ${fmtDate(p.end_date)} · ${daysBetweenInclusive(p.start_date, p.end_date)} day(s)</div>
+      ${p.is_guest && p.guest_desc ? `<div class="meta">Guest vehicle: ${escapeHtml(p.guest_desc)}</div>` : ""}
       ${p.notes ? `<div class="meta">“${escapeHtml(p.notes)}”</div>` : ""}
     </div>`).join("") + `</div>`;
 }
@@ -1092,15 +1107,38 @@ function renderRequestForm() {
   const u = currentUser();
   const renter = activeRenterFor(u.id);
   if (renter) { $("#rtab-request").innerHTML = unitPausedHtml(renter); return; }
-  const opts = vehiclesOf(u.id).map(v =>
+  const myVehicles = vehiclesOf(u.id);
+  const opts = myVehicles.map(v =>
     `<option value="${escapeHtml(v.plate)}">${escapeHtml(v.plate)} — ${escapeHtml(v.make + " " + v.model)}</option>`).join("");
   if (!state.picker) {
     state.picker = { start: daysFromToday(1), end: null, view: null };
   }
+  // Default to guest mode if the resident has no vehicles on file.
+  let mode = state.reqMode || (myVehicles.length ? "mine" : "guest");
+  if (mode === "mine" && !myVehicles.length) mode = "guest";
+  state.reqMode = mode;
+
   $("#rtab-request").innerHTML = `
     <div class="card">
       <div class="notice info">Only guest-lot overnight permits are issued. Overnight street parking (12am–5am) is never permitted.</div>
-      <label class="field"><span>Vehicle</span><select id="reqPlate">${opts || '<option value="">No vehicles on file</option>'}</select></label>
+      <div style="margin:12px 0;">
+        <span style="display:block; font-size:13px; color:var(--text-dim); margin-bottom:6px;">Vehicle</span>
+        <div class="seg" id="reqModeSeg" style="margin-bottom:10px;">
+          <button type="button" data-reqmode="mine" class="${mode === "mine" ? "active" : ""}">My vehicle</button>
+          <button type="button" data-reqmode="guest" class="${mode === "guest" ? "active" : ""}">Guest vehicle</button>
+        </div>
+        <div id="reqMineWrap" style="display:${mode === "mine" ? "block" : "none"};">
+          <select id="reqPlate">${opts || '<option value="">No vehicles on file</option>'}</select>
+        </div>
+        <div id="reqGuestWrap" style="display:${mode === "guest" ? "block" : "none"};">
+          <input id="reqGuestPlate" class="mono" autocapitalize="characters" style="text-transform:uppercase;" placeholder="Guest plate — e.g. 8XYZ999">
+          <div class="grid2" style="margin-top:10px;">
+            <input id="reqGuestState" value="CA" maxlength="2" autocapitalize="characters" placeholder="State">
+            <input id="reqGuestDesc" placeholder="Make/model/color (optional)">
+          </div>
+          <p class="hint">The permit is tied to this plate and counts toward your guest-lot allowance.</p>
+        </div>
+      </div>
       <label class="field"><span>Dates</span><div id="calHost"></div></label>
       <label class="field"><span>Notes (optional)</span><textarea id="reqNotes" placeholder="Anything the board should know"></textarea></label>
       <div id="reqPreview"></div>
@@ -1109,13 +1147,38 @@ function renderRequestForm() {
   const host = $("#calHost");
   host.onclick = onCalClick;
   host.innerHTML = renderRangeCalendar();
-  $("#reqPlate").addEventListener("change", previewPermit);
+  $("#reqModeSeg").querySelectorAll("button").forEach(b =>
+    b.addEventListener("click", () => setReqMode(b.dataset.reqmode)));
+  $("#reqPlate") && $("#reqPlate").addEventListener("change", previewPermit);
+  ["reqGuestPlate", "reqGuestDesc"].forEach(id => $("#" + id) && $("#" + id).addEventListener("input", previewPermit));
   previewPermit();
+}
+
+function setReqMode(mode) {
+  state.reqMode = mode;
+  $("#reqMineWrap").style.display = mode === "mine" ? "block" : "none";
+  $("#reqGuestWrap").style.display = mode === "guest" ? "block" : "none";
+  $("#reqModeSeg").querySelectorAll("button").forEach(b =>
+    b.classList.toggle("active", b.dataset.reqmode === mode));
+  previewPermit();
+}
+
+/* Reads the chosen vehicle (registered or guest) from the request form. */
+function getReqInput() {
+  if (state.reqMode === "guest") {
+    return {
+      plate: (($("#reqGuestPlate") && $("#reqGuestPlate").value) || "").trim().toUpperCase(),
+      isGuest: true,
+      guestDesc: (($("#reqGuestDesc") && $("#reqGuestDesc").value) || "").trim(),
+      guestState: ((($("#reqGuestState") && $("#reqGuestState").value) || "CA").trim().toUpperCase()),
+    };
+  }
+  return { plate: $("#reqPlate") ? $("#reqPlate").value : "", isGuest: false };
 }
 
 function previewPermit() {
   const u = currentUser();
-  const plate = $("#reqPlate") && $("#reqPlate").value;
+  const plate = getReqInput().plate;
   const pk = state.picker || {};
   const startISO = pk.start, endISO = pk.end;
   const host = $("#reqPreview");
@@ -1132,18 +1195,18 @@ function previewPermit() {
 
 function doRequestPermit() {
   const u = currentUser();
-  const plate = $("#reqPlate").value;
+  const { plate, isGuest, guestDesc, guestState } = getReqInput();
   const pk = state.picker || {};
   const startISO = pk.start, endISO = pk.end;
-  if (!plate) { alert("Add a vehicle first."); return; }
+  if (!plate) { alert(isGuest ? "Enter the guest's license plate." : "Add a vehicle or switch to “Guest vehicle”."); return; }
   if (!startISO || !endISO || endISO < startISO) { alert("Pick a start and end date on the calendar."); return; }
-  const { evalResult } = submitPermitRequest({ plate, ownerId: u.id, startISO, endISO, notes: $("#reqNotes").value });
+  const { evalResult } = submitPermitRequest({ plate, ownerId: u.id, startISO, endISO, notes: $("#reqNotes").value, isGuest, guestDesc, guestState });
   state.picker = null; // reset for next time
   openModal(`
     <h3>${evalResult.instant ? "✅ Permit active" : "⏳ Request submitted"}</h3>
     <div class="notice ${evalResult.instant ? "good" : "info"}">
       ${evalResult.instant
-        ? "Your guest-lot permit was auto-approved and is active."
+        ? `Your guest-lot permit for ${escapeHtml(plate)} was auto-approved and is active.`
         : "Your request was sent to the board for approval. You’ll be notified by email."}
     </div>
     <button class="btn-primary btn-block" onclick="closeModal(); state.rtab='permits'; render();">View my permits</button>
@@ -1430,9 +1493,9 @@ function renderAdminQueue() {
     return `<div class="card">
       <div class="row spread">
         <div><strong>${escapeHtml(owner.name)}</strong><div class="meta">${escapeHtml(owner.unit)}</div></div>
-        <span class="plate">${escapeHtml(p.plate)}</span>
+        <span class="row" style="gap:8px;"><span class="plate">${escapeHtml(p.plate)}</span>${p.is_guest ? `<span class="pill gray">Guest</span>` : ""}</span>
       </div>
-      <div class="meta" style="margin-top:8px;">Guest lot · ${fmtDate(p.start_date)} → ${fmtDate(p.end_date)} · ${daysBetweenInclusive(p.start_date, p.end_date)} day(s)</div>
+      <div class="meta" style="margin-top:8px;">Guest lot · ${fmtDate(p.start_date)} → ${fmtDate(p.end_date)} · ${daysBetweenInclusive(p.start_date, p.end_date)} day(s)${p.is_guest && p.guest_desc ? " · " + escapeHtml(p.guest_desc) : ""}</div>
       ${p.notes ? `<div class="notice info">“${escapeHtml(p.notes)}”</div>` : ""}
       <div class="notice warn">Auto-approval blocked:<ul style="margin:6px 0 0 18px;padding:0;">${ev.reasons.map(r => `<li>${escapeHtml(r)}</li>`).join("")}</ul></div>
       <div class="grid2">
@@ -1461,7 +1524,7 @@ function renderAdminPermits() {
     const owner = getOwner(p.requested_by);
     return `<div class="listitem">
       <div class="row spread">
-        <span class="plate">${escapeHtml(p.plate)}</span>${statusPill(p.status)}
+        <span class="row" style="gap:8px;"><span class="plate">${escapeHtml(p.plate)}</span>${p.is_guest ? `<span class="pill gray">Guest</span>` : ""}</span>${statusPill(p.status)}
       </div>
       <div class="meta">${escapeHtml(owner ? owner.name : "?")} · ${fmtDate(p.start_date)} → ${fmtDate(p.end_date)} · ${p.approval_type === "auto" ? "auto" : "admin"}</div>
     </div>`;
