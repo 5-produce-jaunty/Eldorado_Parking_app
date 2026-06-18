@@ -257,6 +257,14 @@
   .cal-day.end { border-top-right-radius: 999px; border-bottom-right-radius: 999px; }
   .cal-day.single { background: transparent; }
   .cal-legend { font-size: 13px; color: var(--text-dim); margin-top: 10px; text-align: center; }
+
+  /* ---------- ARC improvement-type chips ---------- */
+  .arc-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
+  .arc-chip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--bg-elev-2); color: var(--text);
+    border-radius: 999px; padding: 7px 12px; font-size: 13px; line-height: 1; }
+  .arc-chip input { width: auto; min-height: 0; margin: 0; }
+  .arc-chip:has(input:checked) { background: var(--accent); border-color: var(--accent); color: #fff; }
 </style>
 </head>
 <body>
@@ -292,6 +300,7 @@
       <button data-rtab="permits" class="active">Guest permits</button>
       <button data-rtab="request">Request permit</button>
       <button data-rtab="pool">Reservations</button>
+      <button data-rtab="arc">ARC</button>
       <button data-rtab="violations">My violations</button>
       <button data-rtab="vehicles">My vehicles</button>
       <button data-rtab="renter">Renter</button>
@@ -300,6 +309,7 @@
     <div id="rtab-permits"></div>
     <div id="rtab-request"></div>
     <div id="rtab-pool"></div>
+    <div id="rtab-arc"></div>
     <div id="rtab-violations"></div>
     <div id="rtab-vehicles"></div>
     <div id="rtab-renter"></div>
@@ -354,7 +364,22 @@ const CONFIG = {
     ADVANCE_DAYS: 14,           // requests at least two weeks ahead
     DEPOSIT: 150,               // refundable deposit, held until inspection
   },
+  // Architectural / Landscape review
+  ARC: { REVIEW_DAYS: 30 },     // committee review window
 };
+
+/* Architectural review improvement types (from the ECA ARC form) */
+const ARC_HOME_TYPES = ["Structural Addition", "Gazebo/Arbor", "Play structure", "Storage Shed",
+  "Fence Addition", "Deck/Patio", "Greenhouse", "Pool/spa", "Dog run", "Retaining Walls", "Trellis",
+  "Lighting additions", "Lighting Standards", "Skylights", "Solar panels", "Satellite Dish", "Antennae",
+  "Windows/Doors", "Gates", "Painting", "Mailbox enclosure", "Sculptures", "Garage doors", "Lot line adjustments"];
+const ARC_LANDSCAPE_TYPES = ["New Landscape", "Tree addition", "Tree removal", "Arbors/vines",
+  "Hardscape", "Landscape lights", "Water features"];
+/* Approved exterior colors (Eldorado Kelly-Moore matrix) for paint requests */
+const ARC_COLORS = ["14 Frost", "26 Oyster", "27 Bone", "36 Navajo White", "73 Cortez", "74 Seattle Red",
+  "160 Bravado", "171 Sand Pebble", "186 Keystone", "196 Villita", "197 Wood Moss", "212 Saltillo",
+  "216 Malibu Beige", "217 Chadwick", "228 Charro", "230 Graystone", "231 Spanish Sand", "407 Carbon",
+  "412 Cargo", "417 Oxford Brown", "KM3539-1 Clean Canvas"];
 
 /* Single permit type for this association: guest-lot overnight.
    (No street-parking permit — overnight street parking is never permitted.) */
@@ -432,6 +457,21 @@ const db = {
       created_at: daysFromToday(-2), decided_by: "a1", comment: "Deposit received. Enjoy!" },
   ],
 
+  arcRequests: [
+    // Pending architectural review (fence + paint)
+    { id: "arc1", requested_by: "h3", created_at: daysFromToday(-3), address: "Unit 5 · 98 Cedar Ln",
+      email: "priya.nair@example.com", phone_home: "408-555-0105", phone_work: "",
+      start_date: daysFromToday(30), finish_date: daysFromToday(45),
+      types: ["Fence Addition", "Painting"], other_home: "", other_landscape: "",
+      description: "Replace the side-yard fence with a 6 ft cedar fence and repaint the body and trim.",
+      contractor_type: "general", contractor_general: "Bay Area Fencing Co.", contractor_landscape: "",
+      paint: { body: "231 Spanish Sand", trim: "36 Navajo White", accent: "417 Oxford Brown" },
+      photos: [],
+      ack_property: true, ack_damage: true, ack_permits: true, ack_unauthorized: true,
+      status: "pending", decided_by: null, decision_comment: "", decided_at: null,
+      review_target: daysFromToday(27) },
+  ],
+
   violations: [
     { id: "v1", plate: "6GHJ789", rule_id: "r2", location: "Guest Lot B, stall 14",
       occurred_at: daysFromToday(-20) + "T01:10", logged_by: "a1", photo: null,
@@ -469,6 +509,9 @@ function seedAudit() {
   logAudit({ entity_type: "pool_party", entity_id: "pp1", action: "pool_party_requested",
     channel: "in-app", recipient: "Board queue",
     detail: "Pool-party (gazebo) request from James Okafor, 20 people. Needs board approval; $150 deposit due.", at: daysFromToday(0) + "T08:00" });
+  logAudit({ entity_type: "arc", entity_id: "arc1", action: "arc_requested",
+    channel: "in-app", recipient: "Architectural Committee",
+    detail: "ARC request from Priya Nair: Fence Addition, Painting. Up to 30-day review.", at: daysFromToday(-3) + "T16:20" });
 }
 
 /* =====================================================================
@@ -712,6 +755,60 @@ function decidePoolParty(partyId, decision, comment) {
       channel: "email", recipient: owner.email,
       detail: `Pool-party for ${fmtDate(p.date)} denied by ${getOwner(state.actingAs).name}.${comment ? " Reason: " + comment : ""}` });
   }
+}
+
+/* =====================================================================
+   ARCHITECTURAL / LANDSCAPE REVIEW LOGIC
+   ===================================================================== */
+function arcRequestsOf(ownerId) {
+  return db.arcRequests.filter(a => a.requested_by === ownerId)
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+const ARC_STATUS = {
+  pending: ["amber", "Pending review"],
+  info: ["amber", "Info requested"],
+  approved: ["green", "Approved"],
+  approved_conditions: ["green", "Approved w/ conditions"],
+  denied: ["red", "Denied"],
+};
+function arcStatusPill(status) {
+  const [cls, label] = ARC_STATUS[status] || ["gray", status];
+  return `<span class="pill ${cls}">${escapeHtml(label)}</span>`;
+}
+
+function submitArcRequest(data) {
+  const owner = getOwner(data.ownerId);
+  const req = Object.assign({
+    id: uid("arc"), requested_by: data.ownerId, created_at: nowStamp(),
+    status: "pending", decided_by: null, decision_comment: "", decided_at: null,
+    review_target: daysFromToday(CONFIG.ARC.REVIEW_DAYS), photos: data.photos || [],
+  }, data);
+  delete req.ownerId;
+  db.arcRequests.push(req);
+  logAudit({ entity_type: "arc", entity_id: req.id, action: "arc_requested",
+    channel: "in-app", recipient: "Architectural Committee",
+    detail: `ARC request from ${owner.name}: ${req.types.join(", ") || "improvement"}. Up to ${CONFIG.ARC.REVIEW_DAYS}-day review.` });
+  return req;
+}
+
+function decideArc(reqId, decision, comment) {
+  const a = db.arcRequests.find(x => x.id === reqId);
+  if (!a) return;
+  const owner = getOwner(a.requested_by);
+  a.decided_by = state.actingAs;
+  a.decision_comment = comment || "";
+  const map = {
+    approve: ["approved", "approved", "approved"],
+    conditions: ["approved_conditions", "approved with conditions", "approved_with_conditions"],
+    deny: ["denied", "denied", "denied"],
+    info: ["info", "returned for more information", "info_requested"],
+  };
+  const [status, phrase, action] = map[decision];
+  a.status = status;
+  a.decided_at = decision === "info" ? null : nowStamp();
+  logAudit({ entity_type: "arc", entity_id: a.id, action: "arc_" + action,
+    channel: "email", recipient: owner.email,
+    detail: `ARC request ${phrase} by ${getOwner(state.actingAs).name}.${comment ? " Note: " + comment : ""}${decision === "info" ? " (30-day clock paused until the owner responds.)" : ""}` });
 }
 
 /* =====================================================================
@@ -1073,12 +1170,13 @@ function renderResident() {
 
   document.querySelectorAll('#residentTabs button').forEach(b =>
     b.classList.toggle("active", b.dataset.rtab === state.rtab));
-  ["permits", "request", "pool", "violations", "vehicles", "renter"].forEach(t =>
+  ["permits", "request", "pool", "arc", "violations", "vehicles", "renter"].forEach(t =>
     $("#rtab-" + t).style.display = t === state.rtab ? "block" : "none");
 
   if (state.rtab === "permits") renderResidentPermits();
   if (state.rtab === "request") renderRequestForm();
   if (state.rtab === "pool") renderResidentPool();
+  if (state.rtab === "arc") renderResidentArc();
   if (state.rtab === "violations") renderResidentViolations();
   if (state.rtab === "vehicles") renderResidentVehicles();
   if (state.rtab === "renter") renderRenterManage();
@@ -1436,6 +1534,203 @@ function doSubmitPoolParty() {
   `);
 }
 
+/* ---------- ARCHITECTURAL / LANDSCAPE REVIEW (resident) ---------- */
+function renderResidentArc() {
+  const u = currentUser();
+  const host = $("#rtab-arc");
+  if (isRenter(u)) {
+    host.innerHTML = `<div class="card"><div class="notice info">Architectural & landscape changes are submitted by the homeowner. Please coordinate with your landlord for any ARC request.</div></div>`;
+    return;
+  }
+  if (!state.arc) state.arc = {
+    address: u.unit || "", email: u.email || "", phone_home: u.phone || "", phone_work: "",
+    start_date: "", finish_date: "", types: {}, other_home: "", other_landscape: "",
+    description: "", contractor_type: "self", contractor_general: "", contractor_landscape: "",
+    paint: { body: "", trim: "", accent: "" }, photos: [],
+    ack_property: false, ack_damage: false, ack_permits: false, ack_unauthorized: false,
+  };
+  const a = state.arc;
+  const mine = arcRequestsOf(u.id);
+  const chip = t => `<label class="arc-chip"><input type="checkbox" data-arctype="${escapeHtml(t)}" ${a.types[t] ? "checked" : ""}>${escapeHtml(t)}</label>`;
+  const colorOpts = sel => `<option value="">—</option>` + ARC_COLORS.map(c => `<option ${sel === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
+
+  const listHtml = mine.map(r => `
+    <div class="listitem">
+      <div class="row spread"><strong>${escapeHtml(r.types.join(", ") || "Improvement")}</strong>${arcStatusPill(r.status)}</div>
+      <div class="meta">Submitted ${fmtDate(r.created_at)} · review by ${fmtDate(r.review_target)}</div>
+      ${r.decision_comment ? `<div class="meta">Committee: “${escapeHtml(r.decision_comment)}”</div>` : ""}
+    </div>`).join("");
+
+  host.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Request architectural / landscape review</h2>
+      <div class="notice info">Submit improvement plans <strong>before</strong> starting work. Allow up to ${CONFIG.ARC.REVIEW_DAYS} days for committee review. City permits may also be required — those are the owner's responsibility and don't substitute for HOA approval.</div>
+
+      <div class="grid2">
+        <label class="field"><span>Address</span><input id="arcAddress" value="${escapeHtml(a.address)}"></label>
+        <label class="field"><span>Email</span><input id="arcEmail" type="email" value="${escapeHtml(a.email)}"></label>
+      </div>
+      <div class="grid2">
+        <label class="field"><span>Phone (home)</span><input id="arcPhoneH" value="${escapeHtml(a.phone_home)}"></label>
+        <label class="field"><span>Phone (work)</span><input id="arcPhoneW" value="${escapeHtml(a.phone_work)}"></label>
+      </div>
+      <div class="grid2">
+        <label class="field"><span>Proposed start</span><input id="arcStart" type="date" value="${a.start_date}"></label>
+        <label class="field"><span>Proposed finish</span><input id="arcFinish" type="date" value="${a.finish_date}"></label>
+      </div>
+
+      <span style="display:block; font-size:13px; color:var(--text-dim); margin:12px 0 0;">Home improvements</span>
+      <div class="arc-grid">${ARC_HOME_TYPES.map(chip).join("")}</div>
+      <span style="display:block; font-size:13px; color:var(--text-dim); margin:12px 0 0;">Landscape improvements</span>
+      <div class="arc-grid">${ARC_LANDSCAPE_TYPES.map(chip).join("")}</div>
+      <label class="field"><span>Other (specify)</span><input id="arcOther" value="${escapeHtml(a.other_home)}" placeholder="Anything not listed above"></label>
+
+      <label class="field"><span>Describe your improvement in detail</span><textarea id="arcDesc" placeholder="Materials, colors, dimensions, location…">${escapeHtml(a.description)}</textarea></label>
+
+      <div class="card" style="box-shadow:none; background:var(--bg-elev-2);">
+        <span style="display:block; font-size:13px; color:var(--text-dim); margin-bottom:6px;">Paint / exterior color change — colors must be from the approved palette</span>
+        <div class="grid2">
+          <label class="field" style="margin-top:0;"><span>Body</span><select id="arcBody">${colorOpts(a.paint.body)}</select></label>
+          <label class="field" style="margin-top:0;"><span>Trim / fascia</span><select id="arcTrim">${colorOpts(a.paint.trim)}</select></label>
+        </div>
+        <label class="field" style="margin-bottom:0;"><span>Trim accent</span><select id="arcAccent">${colorOpts(a.paint.accent)}</select></label>
+      </div>
+
+      <span style="display:block; font-size:13px; color:var(--text-dim); margin:12px 0 6px;">Who is doing the work?</span>
+      <div class="seg" id="arcContractorSeg" style="margin-bottom:10px;">
+        <button type="button" data-arcwork="self" class="${a.contractor_type === 'self' ? 'active' : ''}">Myself</button>
+        <button type="button" data-arcwork="general" class="${a.contractor_type === 'general' ? 'active' : ''}">General contractor</button>
+        <button type="button" data-arcwork="landscape" class="${a.contractor_type === 'landscape' ? 'active' : ''}">Landscaper</button>
+      </div>
+      <div id="arcContractorName">${a.contractor_type !== "self" ? `<label class="field" style="margin-top:0;"><span>Contractor name</span><input id="arcContractor" value="${escapeHtml(a.contractor_type === 'general' ? a.contractor_general : a.contractor_landscape)}"></label>` : ""}</div>
+
+      <label class="field"><span>Attach plans / drawings / photos</span>
+        <label class="btn btn-block" style="cursor:pointer;" id="arcPhotoBtn">📎 Add files <input id="arcPhotos" type="file" accept="image/*" multiple hidden></label>
+        <div id="arcPhotoPreview"></div>
+      </label>
+
+      <div class="notice warn" style="font-size:12.5px;"><strong>By submitting I acknowledge:</strong></div>
+      <label class="row" style="gap:10px; align-items:flex-start; margin:8px 0;"><input id="arcAck1" type="checkbox" style="width:auto;min-height:0;" ${a.ack_property ? "checked" : ""}><span class="muted" style="font-size:13px;">The improvements are located within my property.</span></label>
+      <label class="row" style="gap:10px; align-items:flex-start; margin:8px 0;"><input id="arcAck2" type="checkbox" style="width:auto;min-height:0;" ${a.ack_damage ? "checked" : ""}><span class="muted" style="font-size:13px;">I'm responsible for any damage to common areas by me or my contractors.</span></label>
+      <label class="row" style="gap:10px; align-items:flex-start; margin:8px 0;"><input id="arcAck3" type="checkbox" style="width:auto;min-height:0;" ${a.ack_permits ? "checked" : ""}><span class="muted" style="font-size:13px;">City permits may be required and are my responsibility; HOA approval doesn't replace them.</span></label>
+      <label class="row" style="gap:10px; align-items:flex-start; margin:8px 0;"><input id="arcAck4" type="checkbox" style="width:auto;min-height:0;" ${a.ack_unauthorized ? "checked" : ""}><span class="muted" style="font-size:13px;">Work won't begin until written HOA approval; unauthorized work may be removed at my expense.</span></label>
+
+      <div id="arcPreview"></div>
+      <button class="btn-primary btn-block" onclick="doSubmitArc()">Submit request</button>
+    </div>
+    ${mine.length ? `<h2>My ARC requests</h2><div class="card">${listHtml}</div>` : ""}
+  `;
+
+  $("#arcContractorSeg").querySelectorAll("button").forEach(b =>
+    b.addEventListener("click", () => { arcSync(); state.arc.contractor_type = b.dataset.arcwork; renderResidentArc(); }));
+  host.querySelectorAll("[data-arctype]").forEach(c => c.addEventListener("change", arcSync));
+  ["arcAddress", "arcEmail", "arcPhoneH", "arcPhoneW", "arcStart", "arcFinish", "arcOther", "arcDesc", "arcBody", "arcTrim", "arcAccent", "arcContractor", "arcAck1", "arcAck2", "arcAck3", "arcAck4"]
+    .forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", arcSync); });
+  const fi = $("#arcPhotos"); if (fi) fi.addEventListener("change", () => addArcPhotos(fi.files));
+  renderArcPhotos();
+  arcPreview();
+}
+
+function arcSync() {
+  const a = state.arc; if (!a || !$("#arcAddress")) return;
+  const v = id => { const el = $("#" + id); return el ? el.value : undefined; };
+  a.address = v("arcAddress"); a.email = v("arcEmail"); a.phone_home = v("arcPhoneH"); a.phone_work = v("arcPhoneW");
+  a.start_date = v("arcStart"); a.finish_date = v("arcFinish"); a.other_home = v("arcOther"); a.description = v("arcDesc");
+  a.paint.body = v("arcBody") || ""; a.paint.trim = v("arcTrim") || ""; a.paint.accent = v("arcAccent") || "";
+  const c = v("arcContractor");
+  if (c !== undefined) { if (a.contractor_type === "general") a.contractor_general = c; else if (a.contractor_type === "landscape") a.contractor_landscape = c; }
+  a.ack_property = $("#arcAck1").checked; a.ack_damage = $("#arcAck2").checked;
+  a.ack_permits = $("#arcAck3").checked; a.ack_unauthorized = $("#arcAck4").checked;
+  a.types = {};
+  document.querySelectorAll("#rtab-arc [data-arctype]").forEach(c => { if (c.checked) a.types[c.dataset.arctype] = true; });
+  arcPreview();
+}
+
+function arcIssues(a) {
+  const issues = [];
+  if (!Object.keys(a.types).length && !(a.other_home || "").trim()) issues.push("Select at least one improvement type.");
+  if (!(a.description || "").trim()) issues.push("Add a description of the improvement.");
+  if (!a.email || !a.email.includes("@")) issues.push("Enter a valid email.");
+  if (a.contractor_type !== "self") {
+    const name = a.contractor_type === "general" ? a.contractor_general : a.contractor_landscape;
+    if (!(name || "").trim()) issues.push("Enter the contractor's name (or choose Myself).");
+  }
+  if (a.types["Painting"] && !a.paint.body) issues.push("Choose a body color from the approved palette for the paint request.");
+  if (a.start_date && a.finish_date && a.finish_date < a.start_date) issues.push("Finish date is before the start date.");
+  if (!(a.ack_property && a.ack_damage && a.ack_permits && a.ack_unauthorized)) issues.push("Acknowledge all four statements.");
+  return issues;
+}
+
+function arcPreview() {
+  const a = state.arc, host = $("#arcPreview"); if (!a || !host) return;
+  const issues = arcIssues(a);
+  host.innerHTML = issues.length
+    ? `<div class="notice warn">Before submitting:<ul style="margin:6px 0 0 18px;padding:0;">${issues.map(i => `<li>${escapeHtml(i)}</li>`).join("")}</ul></div>`
+    : `<div class="notice good">✅ Ready to submit for committee review.</div>`;
+}
+
+function addArcPhotos(files) {
+  const a = state.arc; if (!a || !files) return;
+  Array.from(files).forEach(f => { const r = new FileReader(); r.onload = () => { a.photos.push(r.result); renderArcPhotos(); }; r.readAsDataURL(f); });
+}
+function renderArcPhotos() {
+  const host = $("#arcPhotoPreview"); if (!host) return;
+  const a = state.arc;
+  host.innerHTML = a.photos.length ? `<div class="row wrap" style="gap:8px; margin-top:8px;">` + a.photos.map((p, i) =>
+    `<div style="position:relative;"><img src="${p}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line);"><button type="button" onclick="removeArcPhoto(${i})" style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;min-height:0;padding:0;border-radius:50%;background:var(--red);color:#fff;border:none;">×</button></div>`).join("") + `</div>` : "";
+}
+function removeArcPhoto(i) { state.arc.photos.splice(i, 1); renderArcPhotos(); }
+
+function doSubmitArc() {
+  const u = currentUser(); arcSync(); const a = state.arc;
+  const issues = arcIssues(a);
+  if (issues.length) { alert("Please fix:\n• " + issues.join("\n• ")); return; }
+  submitArcRequest({
+    ownerId: u.id, address: a.address, email: a.email, phone_home: a.phone_home, phone_work: a.phone_work,
+    start_date: a.start_date, finish_date: a.finish_date, types: Object.keys(a.types),
+    other_home: a.other_home, other_landscape: a.other_landscape, description: a.description,
+    contractor_type: a.contractor_type, contractor_general: a.contractor_general, contractor_landscape: a.contractor_landscape,
+    paint: a.paint, photos: a.photos,
+  });
+  state.arc = null;
+  openModal(`<h3>⏳ Submitted for review</h3><div class="notice info">Your architectural request was sent to the committee. Allow up to ${CONFIG.ARC.REVIEW_DAYS} days; you'll be notified by email.</div><button class="btn-primary btn-block" onclick="closeModal(); render();">View my requests</button>`);
+}
+
+function openArcDetail(id) {
+  const a = db.arcRequests.find(x => x.id === id); if (!a) return;
+  const owner = getOwner(a.requested_by);
+  const paint = (a.paint && (a.paint.body || a.paint.trim || a.paint.accent)) ? `Body: ${a.paint.body || "—"} · Trim: ${a.paint.trim || "—"} · Accent: ${a.paint.accent || "—"}` : "";
+  const contractor = a.contractor_type === "self" ? "Homeowner (self)" : (a.contractor_type === "general" ? "General contractor: " + (a.contractor_general || "—") : "Landscaper: " + (a.contractor_landscape || "—"));
+  openModal(`
+    <h3>ARC request</h3>
+    <div class="row spread" style="margin-bottom:8px;"><strong>${escapeHtml(owner.name)}</strong>${arcStatusPill(a.status)}</div>
+    <div class="card tight">
+      <div class="meta">${escapeHtml(a.address)} · ${escapeHtml(a.email)}${a.phone_home ? " · " + escapeHtml(a.phone_home) : ""}</div>
+      <div style="margin-top:6px;"><strong>${escapeHtml(a.types.join(", ") || "Improvement")}</strong>${a.other_home ? " · " + escapeHtml(a.other_home) : ""}</div>
+      <div class="meta" style="margin-top:6px;">Proposed ${a.start_date ? fmtDate(a.start_date) : "—"} → ${a.finish_date ? fmtDate(a.finish_date) : "—"} · review by ${fmtDate(a.review_target)}</div>
+    </div>
+    <div class="card tight">${escapeHtml(a.description || "—")}</div>
+    <div class="card tight"><div class="meta">${escapeHtml(contractor)}</div>${paint ? `<div class="meta" style="margin-top:6px;">Paint — ${escapeHtml(paint)}</div>` : ""}</div>
+    ${a.photos && a.photos.length ? `<div class="row wrap" style="gap:8px;">` + a.photos.map(p => `<img src="${p}" style="width:100%;border-radius:10px;border:1px solid var(--line);">`).join("") + `</div>` : `<div class="card tight" style="text-align:center;color:var(--text-faint);">No attachments</div>`}
+    ${a.decision_comment ? `<div class="notice info">Committee: ${escapeHtml(a.decision_comment)}</div>` : ""}
+    <button class="btn-primary btn-block" style="margin-top:8px;" onclick="closeModal()">Close</button>
+  `);
+}
+
+function decideArcPrompt(id, decision) {
+  const a = db.arcRequests.find(x => x.id === id); if (!a) return;
+  const owner = getOwner(a.requested_by);
+  const labels = { approve: "Approve as submitted", conditions: "Approve with conditions", deny: "Deny", info: "Request more info" };
+  const need = decision !== "approve";
+  openModal(`
+    <h3>${labels[decision]}</h3>
+    <p class="muted">${escapeHtml(owner.name)} · ${escapeHtml(a.types.join(", ") || "improvement")}</p>
+    <label class="field"><span>${decision === "approve" ? "Comment (optional)" : "Comment (sent to the owner)"}</span><textarea id="arcDecComment"></textarea></label>
+    <button class="btn-${decision === "deny" ? "danger" : (decision === "info" ? "primary" : "approve")} btn-block" onclick="(function(){ var c=(($('#arcDecComment').value)||'').trim(); if(${need ? "true" : "false"} && !c){ alert('Please add a comment.'); return; } decideArc('${id}','${decision}',c); closeModal(); render(); })()">${labels[decision]}</button>
+    <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
+  `);
+}
+
 function renderResidentVehicles() {
   const u = currentUser();
   const renter = activeRenterFor(u.id);
@@ -1685,14 +1980,39 @@ function renderUnknownPlates() {
 function renderAdminQueue() {
   const pending = db.permits.filter(p => p.status === "pending");
   const pendingParties = db.poolParties.filter(p => p.status === "pending");
+  const pendingArc = db.arcRequests.filter(a => a.status === "pending" || a.status === "info");
   const host = $("#atab-queue");
-  if (pending.length === 0 && pendingParties.length === 0) {
+  if (pending.length === 0 && pendingParties.length === 0 && pendingArc.length === 0) {
     host.innerHTML = `<div class="card"><div class="empty">Nothing awaiting approval. 🎉</div></div>`; return;
   }
 
   let html = "";
+  if (pendingArc.length) {
+    html += `<h2 style="margin-top:0;">Architectural review</h2>` + pendingArc.map(a => {
+      const owner = getOwner(a.requested_by);
+      const desc = (a.description || "");
+      return `<div class="card">
+        <div class="row spread">
+          <div><strong>${escapeHtml(owner.name)}</strong><div class="meta">${escapeHtml(a.address)}</div></div>
+          <span class="pill amber">ARC${a.status === "info" ? " · info" : ""}</span>
+        </div>
+        <div style="margin-top:6px;"><strong>${escapeHtml(a.types.join(", ") || "Improvement")}</strong></div>
+        <div class="meta" style="margin-top:4px;">Submitted ${fmtDate(a.created_at)} · review by ${fmtDate(a.review_target)}</div>
+        <div class="meta" style="margin-top:6px;">${escapeHtml(desc.slice(0, 140))}${desc.length > 140 ? "…" : ""}</div>
+        <button class="btn-sm btn-ghost" style="margin-top:8px;" onclick="openArcDetail('${a.id}')">View ${a.photos && a.photos.length ? "📎 " : ""}details</button>
+        <div class="grid2" style="margin-top:8px;">
+          <button class="btn-approve" onclick="decideArcPrompt('${a.id}','approve')">Approve</button>
+          <button class="btn-danger" onclick="decideArcPrompt('${a.id}','deny')">Deny</button>
+        </div>
+        <div class="grid2" style="margin-top:8px;">
+          <button class="btn-sm" onclick="decideArcPrompt('${a.id}','conditions')">Approve w/ conditions</button>
+          <button class="btn-sm btn-ghost" onclick="decideArcPrompt('${a.id}','info')">Request info</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
   if (pendingParties.length) {
-    html += `<h2 style="margin-top:0;">Pool parties</h2>` + pendingParties.map(p => {
+    html += `<h2${pendingArc.length ? "" : ' style="margin-top:0;"'}>Pool parties</h2>` + pendingParties.map(p => {
       const owner = getOwner(p.requested_by);
       const ev = evaluatePoolParty({ date: p.date, start: p.start_time, end: p.end_time, guests: p.guest_count, ignoreId: p.id });
       return `<div class="card">
@@ -1712,7 +2032,7 @@ function renderAdminQueue() {
     }).join("");
   }
 
-  if (pending.length) html += `<h2${pendingParties.length ? "" : ' style="margin-top:0;"'}>Guest permits</h2>`;
+  if (pending.length) html += `<h2${(pendingParties.length || pendingArc.length) ? "" : ' style="margin-top:0;"'}>Guest permits</h2>`;
   html += pending.map(p => {
     const owner = getOwner(p.requested_by);
     const ev = evaluatePermit({ plate: p.plate, ownerId: p.requested_by, startISO: p.start_date, endISO: p.end_date });
@@ -1942,6 +2262,11 @@ window.endLease = endLease;
 window.doSubmitPoolParty = doSubmitPoolParty;
 window.decidePoolParty = decidePoolParty;
 window.decidePartyPrompt = decidePartyPrompt;
+window.doSubmitArc = doSubmitArc;
+window.removeArcPhoto = removeArcPhoto;
+window.openArcDetail = openArcDetail;
+window.decideArc = decideArc;
+window.decideArcPrompt = decideArcPrompt;
 window.closeModal = closeModal;
 window.state = state;
 window.render = render;
