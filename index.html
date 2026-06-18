@@ -23,6 +23,11 @@
     --red-bg: #3a1416;
     --amber: #ffb020;
     --amber-bg: #3a2c0a;
+    /* graduated strike severity: 1 = yellow, 2 = orange, 3 = red */
+    --yellow: #ffd23f;
+    --yellow-bg: #3a330a;
+    --orange: #ff8c1a;
+    --orange-bg: #3a230a;
     --radius: 14px;
     --tap: 52px;
   }
@@ -129,10 +134,13 @@
   .pill.green { background: var(--green-bg); color: #67e0a3; border-color: #1d5e42; }
   .pill.red { background: var(--red-bg); color: #ff8b8e; border-color: #5e1d22; }
   .pill.amber { background: var(--amber-bg); color: #ffce7a; border-color: #5e4a14; }
+  .pill.yellow { background: var(--yellow-bg); color: #ffe27a; border-color: #5e5214; }
+  .pill.orange { background: var(--orange-bg); color: #ffb061; border-color: #5e3814; }
   .pill.gray { background: var(--bg-elev-2); color: var(--text-dim); }
 
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
   .dot.green { background: var(--green); } .dot.red { background: var(--red); } .dot.amber { background: var(--amber); } .dot.gray { background: var(--text-faint); }
+  .dot.yellow { background: var(--yellow); } .dot.orange { background: var(--orange); }
 
   /* ---------- Big status card (patrol) ---------- */
   .status {
@@ -147,6 +155,9 @@
   .strikepips { display: inline-flex; gap: 5px; align-items: center; }
   .pip { width: 14px; height: 14px; border-radius: 4px; background: var(--bg-elev-2); border: 1px solid var(--line); }
   .pip.on { background: var(--red); border-color: var(--red); }
+  .pip.s1 { background: var(--yellow); border-color: var(--yellow); }
+  .pip.s2 { background: var(--orange); border-color: var(--orange); }
+  .pip.s3 { background: var(--red); border-color: var(--red); }
 
   /* ---------- Lists ---------- */
   .listitem { border-bottom: 1px solid var(--line); padding: 12px 0; }
@@ -610,6 +621,8 @@ function strikeLabel(n) {
   if (n === 2) return "Strike 2 · Tow warning";
   return `Strike ${n} · Tow-eligible (admin discretion)`;
 }
+/* Graduated severity color for a strike count: 0 gray, 1 yellow, 2 orange, 3+ red. */
+function strikeClass(n) { return n <= 0 ? "gray" : n === 1 ? "yellow" : n === 2 ? "orange" : "red"; }
 
 function logViolation({ plate, ruleId, location, notes, photo }) {
   const nextStrike = strikeCountForPlate(plate) + 1;
@@ -730,7 +743,7 @@ function renderLookup(plate) {
       ${permit ? `<div class="sub" style="margin-top:6px;">Guest-lot permit valid through ${fmtDate(permit.end_date)}</div>` : ""}
       <div class="row" style="margin-top:12px; gap:10px;">
         <div class="strikepips">
-          ${[1,2,3].map(i => `<span class="pip ${i <= strikes ? "on" : ""}"></span>`).join("")}
+          ${[1,2,3].map(i => `<span class="pip ${i <= strikes ? "on s" + i : ""}"></span>`).join("")}
         </div>
         <strong>${escapeHtml(strikeLabel(strikes))}</strong>
       </div>
@@ -763,7 +776,7 @@ function renderLookup(plate) {
 
 function statusPill(status) {
   const map = {
-    issued: ["amber", "Issued"], escalated: ["red", "Escalated"],
+    issued: ["yellow", "Issued"], escalated: ["orange", "Escalated"],
     "tow-eligible": ["red", "Tow-eligible"], resolved: ["gray", "Resolved"],
     active: ["green", "Active"], pending: ["amber", "Pending"],
     approved: ["green", "Approved"], denied: ["red", "Denied"], expired: ["gray", "Expired"],
@@ -803,9 +816,10 @@ function selectRule(plate, ruleId) {
     ${ruleId === "r5" ? `<label class="field"><span>Note (required for catch-all)</span><textarea id="vNote" placeholder="Describe the violation…"></textarea></label>`
                        : `<label class="field"><span>Note (optional)</span><textarea id="vNote"></textarea></label>`}
     <label class="field"><span>Photo</span>
-      <label class="btn btn-block" style="cursor:pointer;">
-        📷 Attach photo <input id="vPhoto" type="file" accept="image/*" capture="environment" hidden onchange="this.parentNode.firstChild.textContent='📷 Photo attached'">
+      <label class="btn btn-block" style="cursor:pointer;" id="vPhotoBtn">
+        📷 Attach photo <input id="vPhoto" type="file" accept="image/*" capture="environment" hidden onchange="previewViolationPhoto(this)">
       </label>
+      <div id="vPhotoPreview"></div>
     </label>
     <button class="btn-danger btn-block" onclick="confirmViolation('${escapeHtml(plate)}','${ruleId}')">Issue violation &amp; notify</button>
     <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="openLogViolation('${escapeHtml(plate)}')">← Back</button>
@@ -848,6 +862,35 @@ function confirmViolation(plate, ruleId) {
   }
 }
 
+/* Live thumbnail + confirmation when a patrol photo is captured (before issuing). */
+function previewViolationPhoto(input) {
+  const host = $("#vPhotoPreview");
+  const btn = $("#vPhotoBtn");
+  const file = input.files && input.files[0];
+  if (!host) return;
+  if (!file) { host.innerHTML = ""; if (btn) btn.firstChild.textContent = "📷 Attach photo "; return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    host.innerHTML = `
+      <div class="card tight" style="margin-top:8px;">
+        <div class="row spread" style="margin-bottom:8px;">
+          <span class="pill green"><span class="dot green"></span>Photo attached</span>
+          <button type="button" class="btn-sm btn-ghost" onclick="clearViolationPhoto()">Remove</button>
+        </div>
+        <img src="${reader.result}" alt="Photo preview" style="width:100%; border-radius:10px; border:1px solid var(--line); display:block;">
+      </div>`;
+    if (btn) btn.firstChild.textContent = "📷 Replace photo ";
+  };
+  reader.onerror = () => { host.innerHTML = `<div class="notice warn" style="margin-top:8px;">Couldn't read that image — try again.</div>`; };
+  reader.readAsDataURL(file);
+}
+function clearViolationPhoto() {
+  const input = $("#vPhoto");
+  if (input) input.value = "";
+  const host = $("#vPhotoPreview"); if (host) host.innerHTML = "";
+  const btn = $("#vPhotoBtn"); if (btn) btn.firstChild.textContent = "📷 Attach photo ";
+}
+
 /* Full detail view for a single violation — opened by tapping any violation row. */
 function openViolationDetail(violationId) {
   const v = db.violations.find(x => x.id === violationId);
@@ -864,7 +907,7 @@ function openViolationDetail(violationId) {
       <span class="plate lg">${escapeHtml(v.plate)}</span>
       ${statusPill(v.status)}
     </div>
-    <div class="notice ${v.strike_number >= 2 ? "warn" : "info"}"><strong>${escapeHtml(strikeLabel(v.strike_number))}</strong></div>
+    <div class="row" style="margin-bottom:10px;"><span class="pill ${strikeClass(v.strike_number)}"><span class="dot ${strikeClass(v.strike_number)}"></span>${escapeHtml(strikeLabel(v.strike_number))}</span></div>
 
     ${v.photo
       ? `<img src="${v.photo}" alt="Violation photo" style="width:100%; border-radius:12px; border:1px solid var(--line); margin:8px 0; display:block;">`
@@ -1101,7 +1144,7 @@ function renderResidentViolations() {
   const host = $("#rtab-violations");
   const total = strikeCountForOwner(u.id);
   let html = `<div class="card"><div class="row spread"><strong>Total active strikes (all your vehicles)</strong>
-    <span class="pill ${total >= 3 ? "red" : total === 2 ? "amber" : total === 1 ? "amber" : "gray"}">${total}</span></div></div>`;
+    <span class="pill ${strikeClass(total)}">${total}</span></div></div>`;
   if (list.length === 0) { html += `<div class="card"><div class="empty">No violations. Nice.</div></div>`; }
   else {
     html += list.map(v => {
@@ -1354,7 +1397,7 @@ function renderUnknownPlates() {
       return `<div class="card">
         <div class="row spread">
           <span class="plate">${escapeHtml(p)}</span>
-          <span class="pill ${towable ? "red" : strikes >= 1 ? "amber" : "gray"}">${strikes} strike(s)${towable ? " · TOW-ELIGIBLE" : ""}</span>
+          <span class="pill ${strikeClass(strikes)}">${strikes} strike(s)${towable ? " · TOW-ELIGIBLE" : ""}</span>
         </div>
         <div class="meta" style="margin-top:6px;">${vs.length} violation(s) · last seen ${fmtDateTime(last.occurred_at)} · ${escapeHtml(last.location || "no location")}</div>
         <div class="row wrap" style="gap:8px; margin-top:10px;">
@@ -1491,7 +1534,7 @@ function renderAdminOwners() {
           ${isRenter(h) ? `<div class="meta">Renting from ${escapeHtml(sp ? sp.name : "?")} · lease ${isRenterActive(h) ? "ends" : "ended"} ${fmtDate(h.lease_end)}</div>` : ""}
           ${!isRenter(h) && activeRenterFor(h.id) ? `<div class="meta">🔑 Leased to ${escapeHtml(activeRenterFor(h.id).name)} (parking paused)</div>` : ""}
         </div>
-        <span class="pill ${strikes >= 3 ? "red" : strikes >= 1 ? "amber" : "gray"}">${strikes} strike(s)</span>
+        <span class="pill ${strikeClass(strikes)}">${strikes} strike(s)</span>
       </div>
       <div class="meta" style="margin-top:8px;">Vehicles: ${plates.length ? plates.map(p => `<span class="plate" style="font-size:12px;">${escapeHtml(p.plate)}</span>`).join(" ") : "none"}</div>
     </div>`;
@@ -1561,6 +1604,8 @@ $("#lookupForm").addEventListener("submit", e => {
 window.openLogViolation = openLogViolation;
 window.selectRule = selectRule;
 window.confirmViolation = confirmViolation;
+window.previewViolationPhoto = previewViolationPhoto;
+window.clearViolationPhoto = clearViolationPhoto;
 window.openViolationDetail = openViolationDetail;
 window.decidePermit = decidePermit;
 window.modifyPermitPrompt = modifyPermitPrompt;
