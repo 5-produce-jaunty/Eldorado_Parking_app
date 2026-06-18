@@ -113,6 +113,8 @@
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-primary:active { background: var(--accent-press); }
   .btn-danger { background: var(--red); border-color: var(--red); color: #fff; }
+  .btn-approve { background: #5f7a33; border-color: #5f7a33; color: #fff; } /* Wood Moss green */
+  .btn-approve:active { background: #506a2a; }
   .btn-ghost { background: transparent; }
   .btn-block { width: 100%; }
   .btn-sm { min-height: 40px; padding: 0 12px; font-size: 14px; }
@@ -1703,7 +1705,7 @@ function renderAdminQueue() {
         ${ev.conflict ? `<div class="notice warn">Another party is requested/approved for this date — confirm combined capacity stays within ${CONFIG.POOL.CAPACITY}.</div>` : ""}
         ${!ev.ok ? `<div class="notice warn">Outside policy:<ul style="margin:6px 0 0 18px;padding:0;">${ev.issues.map(i => `<li>${escapeHtml(i)}</li>`).join("")}</ul></div>` : ""}
         <div class="grid2">
-          <button class="btn-primary" onclick="decidePartyPrompt('${p.id}','approve')">Approve</button>
+          <button class="btn-approve" onclick="decidePartyPrompt('${p.id}','approve')">Approve</button>
           <button class="btn-danger" onclick="decidePartyPrompt('${p.id}','deny')">Deny</button>
         </div>
       </div>`;
@@ -1723,7 +1725,7 @@ function renderAdminQueue() {
       ${p.notes ? `<div class="notice info">“${escapeHtml(p.notes)}”</div>` : ""}
       <div class="notice warn">Auto-approval blocked:<ul style="margin:6px 0 0 18px;padding:0;">${ev.reasons.map(r => `<li>${escapeHtml(r)}</li>`).join("")}</ul></div>
       <div class="grid2">
-        <button class="btn-primary" onclick="decidePermit('${p.id}','approve'); render();">Approve</button>
+        <button class="btn-approve" onclick="decidePermit('${p.id}','approve'); render();">Approve</button>
         <button class="btn-danger" onclick="decidePermit('${p.id}','deny'); render();">Deny</button>
       </div>
       <button class="btn-ghost btn-block btn-sm" style="margin-top:8px;" onclick="modifyPermitPrompt('${p.id}')">Approve with shorter duration…</button>
@@ -1741,7 +1743,7 @@ function decidePartyPrompt(id, decision) {
     <h3>${isApprove ? "Approve" : "Deny"} pool party</h3>
     <p class="muted">${escapeHtml(owner.name)} · ${fmtDate(p.date)} · ${fmtTime(p.start_time)}–${fmtTime(p.end_time)} · ${p.guest_count} people</p>
     <label class="field"><span>${isApprove ? "Comment (optional)" : "Reason (sent to the resident)"}</span><textarea id="ppDecComment" placeholder="${isApprove ? "e.g. Deposit received — enjoy!" : "e.g. Date conflicts with scheduled maintenance."}"></textarea></label>
-    <button class="btn-${isApprove ? "primary" : "danger"} btn-block" onclick="(function(){ var c=(($('#ppDecComment').value)||'').trim(); if(${isApprove ? "false" : "true"} && !c){ alert('Please give a reason.'); return; } decidePoolParty('${id}','${decision}',c); closeModal(); render(); })()">${isApprove ? "Approve" : "Deny"}</button>
+    <button class="btn-${isApprove ? "approve" : "danger"} btn-block" onclick="(function(){ var c=(($('#ppDecComment').value)||'').trim(); if(${isApprove ? "false" : "true"} && !c){ alert('Please give a reason.'); return; } decidePoolParty('${id}','${decision}',c); closeModal(); render(); })()">${isApprove ? "Approve" : "Deny"}</button>
     <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
   `);
 }
@@ -1752,7 +1754,7 @@ function modifyPermitPrompt(permitId) {
     <h3>Approve with modified duration</h3>
     <p class="muted">Plate <span class="plate">${escapeHtml(p.plate)}</span></p>
     <label class="field"><span>New end date</span><input id="modEnd" type="date" value="${p.end_date}" min="${p.start_date}"></label>
-    <button class="btn-primary btn-block" onclick="(function(){ decidePermit('${p.id}','approve', $('#modEnd').value); closeModal(); render(); })()">Approve</button>
+    <button class="btn-approve btn-block" onclick="(function(){ decidePermit('${p.id}','approve', $('#modEnd').value); closeModal(); render(); })()">Approve</button>
     <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
   `);
 }
