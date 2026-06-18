@@ -8,27 +8,30 @@
 <style>
   /* ---------- Design tokens ---------- */
   :root {
-    /* Mediterranean palette — whitewash + sand + terracotta, tuned for contrast */
-    --bg: #e9dec9;          /* sand background (so white cards pop) */
-    --bg-elev: #ffffff;     /* crisp white card surface */
-    --bg-elev-2: #f1e8d7;   /* secondary surface / tan chips */
-    --line: #d6c5a6;        /* warm border */
-    --text: #2a211a;        /* near-black warm brown (high contrast) */
-    --text-dim: #574a3c;    /* readable muted brown */
-    --text-faint: #897760;  /* faint brown */
-    --accent: #c2562f;      /* terracotta tile */
-    --accent-press: #a3461f;
-    --green: #5a8a3c;       /* olive (good) */
-    --green-bg: #e2efd3;
-    --red: #c0392b;         /* brick red (danger) */
-    --red-bg: #f6dcd2;
-    --amber: #d39524;       /* gold (pending) */
-    --amber-bg: #f7eccf;
-    /* graduated strike severity: 1 = yellow, 2 = orange, 3 = red */
-    --yellow: #e0a92e;
-    --yellow-bg: #f5e7b8;
-    --orange: #d2691e;
-    --orange-bg: #f7ddc2;
+    /* Palette from Eldorado's approved Kelly-Moore matrix
+       (Saltillo terracotta, Spanish Sand, Navajo White, Oxford Brown,
+        Carbon, Wood Moss, Seattle Red, Graystone). Hex values are close
+        approximations of the named swatches. */
+    --bg: #e4d6b8;          /* Spanish Sand — page background */
+    --bg-elev: #fbf8f0;     /* Navajo White — card surface */
+    --bg-elev-2: #efe5d0;   /* light tan (Bone/Oyster) — chips/inputs */
+    --line: #d3c09e;        /* Sand Pebble — borders */
+    --text: #322619;        /* Carbon / Oxford Brown — body text */
+    --text-dim: #5a4632;    /* Oxford Brown — secondary text */
+    --text-faint: #6d6358;  /* deepened Graystone — faint text */
+    --accent: #b5623c;      /* Saltillo — terracotta accent */
+    --accent-press: #9a5030;
+    --green: #6f7a43;       /* Wood Moss — olive (good) */
+    --green-bg: #e7eed2;
+    --red: #9c3a2e;         /* Seattle Red — brick (danger) */
+    --red-bg: #f3dcd5;
+    --amber: #b98a3a;       /* gold (pending) */
+    --amber-bg: #f5e8c8;
+    /* graduated strike severity: 1 = gold, 2 = terracotta-orange, 3 = brick red */
+    --yellow: #c8962f;
+    --yellow-bg: #f4e6bf;
+    --orange: #c2702f;
+    --orange-bg: #f5dcc4;
     --radius: 14px;
     --tap: 52px;
   }
@@ -46,8 +49,8 @@
   /* ---------- Top bar (role switcher) ---------- */
   header {
     position: sticky; top: 0; z-index: 30;
-    background: linear-gradient(135deg, #c5683f, #ad4f2d);
-    border-bottom: 1px solid rgba(0,0,0,.14);
+    background: linear-gradient(135deg, #b5623c, #9a5030);
+    border-bottom: 1px solid rgba(0,0,0,.16);
     padding: 10px 14px;
     display: flex; align-items: center; gap: 10px;
   }
@@ -132,11 +135,11 @@
     font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
     border: 1px solid var(--line);
   }
-  .pill.green { background: var(--green-bg); color: #2f6b22; border-color: #9cc77f; }
-  .pill.red { background: var(--red-bg); color: #97271a; border-color: #e0a394; }
-  .pill.amber { background: var(--amber-bg); color: #7a5610; border-color: #ddc486; }
-  .pill.yellow { background: var(--yellow-bg); color: #7d5b10; border-color: #d9c06a; }
-  .pill.orange { background: var(--orange-bg); color: #944213; border-color: #e6b483; }
+  .pill.green { background: var(--green-bg); color: #485524; border-color: #b6c489; }
+  .pill.red { background: var(--red-bg); color: #8a2f23; border-color: #d9a99c; }
+  .pill.amber { background: var(--amber-bg); color: #6e5114; border-color: #ddc585; }
+  .pill.yellow { background: var(--yellow-bg); color: #6f5512; border-color: #d8c06c; }
+  .pill.orange { background: var(--orange-bg); color: #8a481b; border-color: #e0ad80; }
   .pill.gray { background: var(--bg-elev-2); color: var(--text-dim); border-color: var(--line); }
 
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
@@ -148,8 +151,8 @@
     border-radius: var(--radius); padding: 16px; margin-top: 14px;
     border: 2px solid var(--line);
   }
-  .status.ok { background: linear-gradient(160deg, #e6f1d6, #dcebc8); border-color: #a9cf86; }
-  .status.bad { background: linear-gradient(160deg, #f7e0d6, #f2d2c5); border-color: #e3a48f; }
+  .status.ok { background: linear-gradient(160deg, #e9efd6, #e1eac8); border-color: #b6c489; }
+  .status.bad { background: linear-gradient(160deg, #f3ddd4, #eed1c6); border-color: #d9a99c; }
   .status .big { font-size: 22px; font-weight: 800; margin: 8px 0 2px; }
   .status .sub { color: var(--text-dim); font-size: 13px; }
 
@@ -202,9 +205,13 @@
   .rule-btn small { display: block; color: var(--text-faint); font-weight: 500; font-size: 12px; }
 
   .notice { font-size: 13px; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
-  .notice.info { background: #e3eef3; border: 1px solid #c2dae5; color: #2f5666; }
-  .notice.warn { background: var(--amber-bg); border: 1px solid #ddc486; color: #7a5610; }
-  .notice.good { background: var(--green-bg); border: 1px solid #9cc77f; color: #2f6b22; }
+  .notice.info { background: #efe6d3; border: 1px solid #d3c09e; color: #5a4632; }
+  .notice.warn { background: var(--amber-bg); border: 1px solid #ddc585; color: #6e5114; }
+  .notice.good { background: var(--green-bg); border: 1px solid #b6c489; color: #485524; }
+  /* strike-severity notices (match the strike pills): 1 gold, 2 orange, 3 red */
+  .notice.yellow { background: var(--yellow-bg); border: 1px solid #d8c06c; color: #6f5512; }
+  .notice.orange { background: var(--orange-bg); border: 1px solid #e0ad80; color: #8a481b; }
+  .notice.red { background: var(--red-bg); border: 1px solid #d9a99c; color: #8a2f23; }
 
   .tablerow { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
   .seg { display: inline-flex; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 3px; flex-wrap: wrap; }
@@ -229,9 +236,9 @@
   .cal-day > i { font-style: normal; }
   .cal-day:disabled { color: var(--text-faint); opacity: .28; }
   /* range fill spans the full cell so consecutive days connect visually */
-  .cal-day.inrange { background: rgba(193,95,60,.16); }
+  .cal-day.inrange { background: rgba(181,98,60,.18); }
   .cal-day.start, .cal-day.end {
-    background: rgba(193,95,60,.16);
+    background: rgba(181,98,60,.18);
   }
   .cal-day.start > i, .cal-day.end > i {
     background: var(--accent); color: #fff; font-style: normal;
@@ -840,7 +847,7 @@ function confirmViolation(plate, ruleId) {
     closeModal();
     openModal(`
       <h3>✅ Violation logged</h3>
-      <div class="notice good">
+      <div class="notice ${strikeClass(v.strike_number)}">
         <strong>${escapeHtml(strikeLabel(v.strike_number))}</strong> recorded for <span class="plate">${escapeHtml(plate)}</span>.<br>
         ${owner ? `Notification emailed to ${escapeHtml(owner.name)} (${escapeHtml(owner.email)}).`
                 : `No owner on file — place a windshield notice on the vehicle. The strike is recorded against the plate.`}
