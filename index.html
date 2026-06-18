@@ -199,6 +199,37 @@
   .seg button { min-height: 38px; padding: 0 12px; border: none; background: transparent; color: var(--text-dim); font-size: 13px; border-radius: 9px; }
   .seg button.active { background: var(--accent); color: #fff; }
   a.link { color: var(--accent); text-decoration: none; }
+
+  /* ---------- Range calendar ---------- */
+  .cal { background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .cal-head .mname { font-weight: 700; font-size: 15px; }
+  .cal-nav { width: 42px; height: 42px; min-height: 42px; padding: 0; border-radius: 10px; font-size: 20px; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px 0; }
+  .cal-dow { text-align: center; font-size: 11px; color: var(--text-faint); padding: 4px 0 8px; font-weight: 700; }
+  .cal-day {
+    aspect-ratio: 1 / 1; min-height: 0; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; color: var(--text); border: none; border-radius: 0;
+    font-size: 14px; font-weight: 600;
+  }
+  .cal-day.empty { background: transparent; }
+  .cal-day > i { font-style: normal; }
+  .cal-day:disabled { color: var(--text-faint); opacity: .28; }
+  /* range fill spans the full cell so consecutive days connect visually */
+  .cal-day.inrange { background: rgba(79,140,255,.16); }
+  .cal-day.start, .cal-day.end {
+    background: rgba(79,140,255,.16);
+  }
+  .cal-day.start > i, .cal-day.end > i {
+    background: var(--accent); color: #fff; font-style: normal;
+    width: 84%; height: 84%; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cal-day.start { border-top-left-radius: 999px; border-bottom-left-radius: 999px; }
+  .cal-day.end { border-top-right-radius: 999px; border-bottom-right-radius: 999px; }
+  .cal-day.single { background: transparent; }
+  .cal-legend { font-size: 13px; color: var(--text-dim); margin-top: 10px; text-align: center; }
 </style>
 </head>
 <body>
@@ -280,6 +311,7 @@ const CONFIG = {
   MAX_PERMIT_DAYS: 2,            // self-serve duration cap
   MAX_SELF_SERVE_DAYS_30: 4,    // self-serve permit-days per rolling 30 days
   MIN_GAP_HOURS: 24,            // no new permit within 24h of a prior one expiring
+  VEHICLE_RETENTION_DAYS: 90,   // soft-deleted vehicles kept this long for enforcement history
 };
 
 /* Single permit type for this association: guest-lot overnight.
@@ -396,7 +428,9 @@ function nowStamp() { return new Date().toISOString().slice(0, 16); }
 
 function getOwner(id) { return db.homeowners.find(h => h.id === id) || null; }
 function getRule(id) { return db.rules.find(r => r.id === id) || null; }
-function vehiclesOf(ownerId) { return db.vehicles.filter(v => v.homeowner_id === ownerId); }
+function vehiclesOf(ownerId, includeDeleted = false) {
+  return db.vehicles.filter(v => v.homeowner_id === ownerId && (includeDeleted || !v.deleted_at));
+}
 function ownerOfPlate(plate) {
   const v = db.vehicles.find(x => x.plate === plate);
   return v && v.homeowner_id ? getOwner(v.homeowner_id) : null;
@@ -801,31 +835,108 @@ function renderResidentPermits() {
     </div>`).join("") + `</div>`;
 }
 
+/* ---------- Inline range calendar (single-open start→end picker) ---------- */
+const CAL_DOW = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const CAL_MON = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+
+function isoOf(y, m, d) { // m is 0-based
+  return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+function parseISO(iso) { const [y, m, d] = iso.split("-").map(Number); return { y, m: m - 1, d }; }
+
+function renderRangeCalendar() {
+  const pk = state.picker;
+  if (!pk.view) { const t = parseISO(pk.start || todayISO); pk.view = { y: t.y, m: t.m }; }
+  const { y, m } = pk.view;
+  const startDow = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+
+  let cells = "";
+  for (let i = 0; i < startDow; i++) cells += `<div class="cal-day empty"></div>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = isoOf(y, m, d);
+    const past = iso < todayISO;
+    let cls = "cal-day";
+    if (pk.start && pk.end) {
+      if (iso === pk.start) cls += " start";
+      if (iso === pk.end) cls += " end";
+      if (iso === pk.start && iso === pk.end) cls += " single";
+      if (iso > pk.start && iso < pk.end) cls += " inrange";
+    } else if (pk.start && iso === pk.start) {
+      cls += " start end single";
+    }
+    cells += `<button type="button" class="${cls}" ${past ? "disabled" : ""} onclick="pickDay('${iso}')"><i>${d}</i></button>`;
+  }
+
+  return `<div class="cal">
+    <div class="cal-head">
+      <button type="button" class="btn cal-nav" onclick="calMove(-1)" aria-label="Previous month">‹</button>
+      <span class="mname">${CAL_MON[m]} ${y}</span>
+      <button type="button" class="btn cal-nav" onclick="calMove(1)" aria-label="Next month">›</button>
+    </div>
+    <div class="cal-grid">
+      ${CAL_DOW.map(d => `<div class="cal-dow">${d}</div>`).join("")}
+      ${cells}
+    </div>
+    <div class="cal-legend">${calLegend()}</div>
+  </div>`;
+}
+
+function calLegend() {
+  const pk = state.picker;
+  if (!pk.start) return "Tap your <strong>first</strong> night.";
+  if (!pk.end) return `Start <strong>${fmtDate(pk.start)}</strong> — now tap the <strong>last</strong> night.`;
+  return `<strong>${fmtDate(pk.start)} → ${fmtDate(pk.end)}</strong> · ${daysBetweenInclusive(pk.start, pk.end)} day(s)`;
+}
+
+function pickDay(iso) {
+  const pk = state.picker;
+  if (!pk.start || pk.end) { pk.start = iso; pk.end = null; }   // start a fresh range
+  else if (iso < pk.start) { pk.start = iso; }                  // tapped before start → new start
+  else { pk.end = iso; }                                        // complete the range
+  $("#calHost").innerHTML = renderRangeCalendar();
+  previewPermit();
+}
+
+function calMove(delta) {
+  const pk = state.picker;
+  let { y, m } = pk.view;
+  m += delta;
+  if (m < 0) { m = 11; y--; }
+  if (m > 11) { m = 0; y++; }
+  pk.view = { y, m };
+  $("#calHost").innerHTML = renderRangeCalendar();
+}
+
 function renderRequestForm() {
   const u = currentUser();
   const opts = vehiclesOf(u.id).map(v =>
     `<option value="${escapeHtml(v.plate)}">${escapeHtml(v.plate)} — ${escapeHtml(v.make + " " + v.model)}</option>`).join("");
+  if (!state.picker || !state.picker.start) {
+    state.picker = { start: daysFromToday(1), end: daysFromToday(1), view: null };
+  }
   $("#rtab-request").innerHTML = `
     <div class="card">
       <div class="notice info">Only guest-lot overnight permits are issued. Overnight street parking (12am–5am) is never permitted.</div>
       <label class="field"><span>Vehicle</span><select id="reqPlate">${opts || '<option value="">No vehicles on file</option>'}</select></label>
-      <div class="grid2">
-        <label class="field"><span>Start date</span><input id="reqStart" type="date" value="${daysFromToday(1)}"></label>
-        <label class="field"><span>End date</span><input id="reqEnd" type="date" value="${daysFromToday(1)}"></label>
-      </div>
+      <label class="field"><span>Dates</span><div id="calHost"></div></label>
       <label class="field"><span>Notes (optional)</span><textarea id="reqNotes" placeholder="Anything the board should know"></textarea></label>
       <div id="reqPreview"></div>
       <button class="btn-primary btn-block" onclick="doRequestPermit()">Submit request</button>
     </div>`;
-  ["reqPlate", "reqStart", "reqEnd"].forEach(id => $("#" + id).addEventListener("input", previewPermit));
+  $("#calHost").innerHTML = renderRangeCalendar();
+  $("#reqPlate").addEventListener("change", previewPermit);
   previewPermit();
 }
 
 function previewPermit() {
   const u = currentUser();
-  const plate = $("#reqPlate").value;
-  const startISO = $("#reqStart").value, endISO = $("#reqEnd").value;
+  const plate = $("#reqPlate") && $("#reqPlate").value;
+  const pk = state.picker || {};
+  const startISO = pk.start, endISO = pk.end;
   const host = $("#reqPreview");
+  if (!host) return;
   if (!plate || !startISO || !endISO) { host.innerHTML = ""; return; }
   if (endISO < startISO) { host.innerHTML = `<div class="notice warn">End date is before start date.</div>`; return; }
   const ev = evaluatePermit({ plate, ownerId: u.id, startISO, endISO });
@@ -839,10 +950,12 @@ function previewPermit() {
 function doRequestPermit() {
   const u = currentUser();
   const plate = $("#reqPlate").value;
-  const startISO = $("#reqStart").value, endISO = $("#reqEnd").value;
+  const pk = state.picker || {};
+  const startISO = pk.start, endISO = pk.end;
   if (!plate) { alert("Add a vehicle first."); return; }
-  if (!startISO || !endISO || endISO < startISO) { alert("Check your dates."); return; }
+  if (!startISO || !endISO || endISO < startISO) { alert("Pick a start and end date on the calendar."); return; }
   const { evalResult } = submitPermitRequest({ plate, ownerId: u.id, startISO, endISO, notes: $("#reqNotes").value });
+  state.picker = null; // reset for next time
   openModal(`
     <h3>${evalResult.instant ? "✅ Permit active" : "⏳ Request submitted"}</h3>
     <div class="notice ${evalResult.instant ? "good" : "info"}">
@@ -890,7 +1003,11 @@ function renderResidentVehicles() {
             <span class="plate">${escapeHtml(v.plate)}</span>
             <span class="meta">${strikeCountForPlate(v.plate)} active strike(s)</span>
           </div>
-          <div class="meta">${escapeHtml(`${v.color} ${v.make} ${v.model} · ${v.state}`)}</div>
+          <div class="row spread" style="margin-top:6px; align-items:flex-end;">
+            <div class="meta">${escapeHtml(`${v.color} ${v.make} ${v.model} · ${v.state}`)}</div>
+            <button class="btn-sm btn-ghost" style="color:var(--red); border-color:var(--line);"
+              onclick="confirmDeleteVehicle('${escapeHtml(v.plate)}')">Remove</button>
+          </div>
         </div>`).join("") : `<div class="empty">No vehicles yet.</div>`}
     </div>
     <div class="card">
@@ -911,15 +1028,64 @@ function renderResidentVehicles() {
 function addVehicle() {
   const plate = ($("#nvPlate").value || "").trim().toUpperCase();
   if (!plate) { alert("Plate is required."); return; }
-  if (vehicleOfPlate(plate)) { alert("That plate already exists."); return; }
-  db.vehicles.push({
-    plate, state: ($("#nvState").value || "CA").toUpperCase(),
+  const existing = vehicleOfPlate(plate);
+  if (existing && !existing.deleted_at) { alert("That plate already exists."); return; }
+
+  const details = {
+    state: ($("#nvState").value || "CA").toUpperCase(),
     make: $("#nvMake").value || "", model: $("#nvModel").value || "",
-    color: $("#nvColor").value || "", homeowner_id: state.actingAs,
-  });
+    color: $("#nvColor").value || "",
+  };
+
+  if (existing && existing.deleted_at) {
+    // Re-adding a plate that was removed within the retention window → restore it.
+    existing.deleted_at = null;
+    existing.homeowner_id = state.actingAs;
+    Object.assign(existing, details);
+    logAudit({ entity_type: "vehicle", entity_id: plate, action: "vehicle_restored",
+      channel: "in-app", recipient: currentUser().email,
+      detail: `Vehicle ${plate} restored from retained records by ${currentUser().name}.` });
+    render();
+    return;
+  }
+
+  db.vehicles.push(Object.assign({ plate, homeowner_id: state.actingAs, deleted_at: null }, details));
   logAudit({ entity_type: "vehicle", entity_id: plate, action: "vehicle_added",
     channel: "in-app", recipient: currentUser().email, detail: `Vehicle ${plate} added.` });
   render();
+}
+
+/* Soft-delete: the vehicle leaves the resident's account immediately, but the
+   record (and its violation/permit history) is retained for CONFIG.VEHICLE_RETENTION_DAYS
+   so any open enforcement or dispute still resolves, then it is purged at boot. */
+function deleteVehicle(plate) {
+  const v = vehicleOfPlate(plate);
+  if (!v) return;
+  v.deleted_at = nowStamp();
+  logAudit({ entity_type: "vehicle", entity_id: plate, action: "vehicle_removed",
+    channel: "in-app", recipient: currentUser().email,
+    detail: `Vehicle ${plate} removed by ${currentUser().name}. Record retained ${CONFIG.VEHICLE_RETENTION_DAYS} days for enforcement history, then permanently deleted.` });
+}
+
+function confirmDeleteVehicle(plate) {
+  const open = db.permits.filter(p => p.plate === plate && (p.status === "active" || p.status === "pending"));
+  openModal(`
+    <h3>Remove vehicle?</h3>
+    <p class="muted">Plate <span class="plate">${escapeHtml(plate)}</span></p>
+    ${open.length ? `<div class="notice warn">This vehicle has ${open.length} active/pending permit(s). Removing it won't cancel them automatically.</div>` : ""}
+    <div class="notice info">It's removed from your account right away. Its violation &amp; permit history is kept for <strong>${CONFIG.VEHICLE_RETENTION_DAYS} days</strong> (in case of an open enforcement or dispute), then permanently deleted. You can re-add the same plate to restore it during that window.</div>
+    <button class="btn-danger btn-block" onclick="doDeleteVehicle('${escapeHtml(plate)}')">Remove vehicle</button>
+    <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
+  `);
+}
+function doDeleteVehicle(plate) { deleteVehicle(plate); closeModal(); render(); }
+
+/* Purge soft-deleted vehicles past the retention window (runs at boot). */
+function purgeExpiredVehicles() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - CONFIG.VEHICLE_RETENTION_DAYS);
+  const cutoffISO = cutoff.toISOString().slice(0, 10);
+  db.vehicles = db.vehicles.filter(v => !(v.deleted_at && v.deleted_at.slice(0, 10) < cutoffISO));
 }
 
 /* ---------- ADMIN ---------- */
@@ -1123,6 +1289,10 @@ window.linkPrompt = linkPrompt;
 window.doLink = doLink;
 window.doRequestPermit = doRequestPermit;
 window.addVehicle = addVehicle;
+window.confirmDeleteVehicle = confirmDeleteVehicle;
+window.doDeleteVehicle = doDeleteVehicle;
+window.pickDay = pickDay;
+window.calMove = calMove;
 window.closeModal = closeModal;
 window.state = state;
 window.render = render;
@@ -1130,6 +1300,7 @@ window.$ = $;
 
 /* boot */
 seedAudit();
+purgeExpiredVehicles();
 buildRoleSelect();
 render();
 </script>
