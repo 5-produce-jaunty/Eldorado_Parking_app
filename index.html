@@ -129,6 +129,7 @@
   }
   textarea { min-height: 84px; resize: vertical; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid2 > * { min-width: 0; } /* let grid cells shrink so inputs don't overflow/overlap */
 
   /* ---------- Badges / pills ---------- */
   .pill {
@@ -287,7 +288,7 @@
     <div class="seg" id="residentTabs" style="margin-bottom:14px;">
       <button data-rtab="permits" class="active">Guest permits</button>
       <button data-rtab="request">Request permit</button>
-      <button data-rtab="pool">Pool party</button>
+      <button data-rtab="pool">Reservations</button>
       <button data-rtab="violations">My violations</button>
       <button data-rtab="vehicles">My vehicles</button>
       <button data-rtab="renter">Renter</button>
@@ -1347,6 +1348,8 @@ function renderResidentPool() {
       <label class="field"><span>People attending (max ${P.CAPACITY}, including you)</span><input id="ppGuests" type="number" inputmode="numeric" min="1" max="${P.CAPACITY}" value="${pr.guests}"></label>
       <label class="field"><span>Notes (type of party, etc.)</span><textarea id="ppNotes" placeholder="Optional">${escapeHtml(pr.notes || "")}</textarea></label>
 
+      <div id="ppPreview"></div>
+
       <div class="notice warn" style="font-size:12.5px;">
         <strong>Pool party rules</strong>
         <ul style="margin:6px 0 0 18px; padding:0;">
@@ -1360,14 +1363,47 @@ function renderResidentPool() {
       <label class="row" style="gap:10px; align-items:flex-start; margin:10px 0;"><input id="ppAgree" type="checkbox" style="width:auto; min-height:0;" ${pr.agreeRules ? "checked" : ""}><span class="muted" style="font-size:13px;">I have read and agree to abide by all pool rules, plus local, county and state laws.</span></label>
       <label class="row" style="gap:10px; align-items:flex-start; margin:10px 0;"><input id="ppDeposit" type="checkbox" style="width:auto; min-height:0;" ${pr.agreeDeposit ? "checked" : ""}><span class="muted" style="font-size:13px;">I understand a $${P.DEPOSIT} deposit is required and I must be present for the entire party.</span></label>
 
-      <div id="ppPreview"></div>
       <button class="btn-primary btn-block" onclick="doSubmitPoolParty()">Submit request</button>
     </div>
-    ${mine.length ? `<h2>My pool party requests</h2><div class="card">${listHtml}</div>` : ""}
+    ${mine.length ? `<h2>My reservations</h2><div class="card">${listHtml}</div>` : ""}
   `;
-  ["ppDate", "ppStart", "ppEnd", "ppGuests", "ppNotes", "ppAgree", "ppDeposit"].forEach(id => {
+  // Times auto-clamp to the allowed window; other fields just refresh the preview.
+  $("#ppStart").addEventListener("change", () => clampPartyTimes("start"));
+  $("#ppEnd").addEventListener("change", () => clampPartyTimes("end"));
+  ["ppDate", "ppGuests", "ppNotes", "ppAgree", "ppDeposit"].forEach(id => {
     const el = $("#" + id); if (el) el.addEventListener("input", previewPoolParty);
   });
+  clampPartyTimes("start"); // normalize the initial window
+}
+
+function hhmmOf(min) {
+  min = ((min % 1440) + 1440) % 1440;
+  return String(Math.floor(min / 60)).padStart(2, "0") + ":" + String(min % 60).padStart(2, "0");
+}
+
+/* Keep the party inside [open, close] and <= MAX_HOURS automatically,
+   so the user never has to "fix" the time — it self-corrects. */
+function clampPartyTimes(changed) {
+  const P = CONFIG.POOL, maxLen = P.MAX_HOURS * 60;
+  const open = minutesOf(P.EARLIEST_START), close = minutesOf(P.LATEST_END);
+  const sEl = $("#ppStart"), eEl = $("#ppEnd");
+  if (!sEl || !eEl) return;
+  let s = minutesOf(sEl.value || "14:00"), e = minutesOf(eEl.value || "17:00");
+
+  if (changed === "end") {
+    e = Math.min(Math.max(e, open + 30), close);
+    let dur = e - s;
+    if (dur <= 0 || dur > maxLen) s = Math.max(open, e - maxLen);
+  } else {
+    s = Math.min(Math.max(s, open), close - 30);
+    let dur = e - s;
+    if (dur <= 0) dur = maxLen;
+    if (dur > maxLen) dur = maxLen;
+    e = Math.min(s + dur, close);
+  }
+
+  sEl.value = hhmmOf(s); eEl.value = hhmmOf(e);
+  if (state.party) { state.party.start = sEl.value; state.party.end = eEl.value; }
   previewPoolParty();
 }
 
