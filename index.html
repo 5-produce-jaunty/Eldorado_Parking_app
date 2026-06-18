@@ -27,11 +27,11 @@
     --red-bg: #f3dcd5;
     --amber: #b98a3a;       /* gold (pending) */
     --amber-bg: #f5e8c8;
-    /* graduated strike severity: 1 = gold, 2 = terracotta-orange, 3 = brick red */
-    --yellow: #c8962f;
-    --yellow-bg: #f4e6bf;
-    --orange: #c2702f;
-    --orange-bg: #f5dcc4;
+    /* graduated strike severity: 1 = bright yellow, 2 = vivid orange, 3 = red (wide gap) */
+    --yellow: #f7d11a;
+    --yellow-bg: #fdf0b8;
+    --orange: #e8711a;
+    --orange-bg: #fbdcc0;
     --radius: 14px;
     --tap: 52px;
   }
@@ -136,12 +136,15 @@
     font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
     border: 1px solid var(--line);
   }
-  .pill.green { background: var(--green-bg); color: #485524; border-color: #b6c489; }
-  .pill.red { background: var(--red-bg); color: #8a2f23; border-color: #d9a99c; }
-  .pill.amber { background: var(--amber-bg); color: #6e5114; border-color: #ddc585; }
-  .pill.yellow { background: var(--yellow-bg); color: #6f5512; border-color: #d8c06c; }
-  .pill.orange { background: var(--orange-bg); color: #8a481b; border-color: #e0ad80; }
+  /* Strike/status pills are SOLID so the severity hues read distinctly:
+     green = ok, gold = strike 1, orange = strike 2, red = strike 3/denied. */
+  .pill.green { background: #5f7a33; color: #fff; border-color: #51692a; }
+  .pill.red { background: #c0392b; color: #fff; border-color: #a52d21; }
+  .pill.orange { background: #e8711a; color: #2e1700; border-color: #cf6214; }
+  .pill.yellow { background: #f7d11a; color: #3a2c00; border-color: #e0bb10; }
+  .pill.amber { background: var(--amber-bg); color: #6e5114; border-color: #ddc585; } /* pending (soft) */
   .pill.gray { background: var(--bg-elev-2); color: var(--text-dim); border-color: var(--line); }
+  .pill .dot { display: none; } /* solid pills don't need the inner dot */
 
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
   .dot.green { background: var(--green); } .dot.red { background: var(--red); } .dot.amber { background: var(--amber); } .dot.gray { background: var(--text-faint); }
@@ -209,10 +212,10 @@
   .notice.info { background: #e7eef4; border: 1px solid #cdddea; color: #345a72; }
   .notice.warn { background: var(--amber-bg); border: 1px solid #ddc585; color: #6e5114; }
   .notice.good { background: var(--green-bg); border: 1px solid #b6c489; color: #485524; }
-  /* strike-severity notices (match the strike pills): 1 gold, 2 orange, 3 red */
-  .notice.yellow { background: var(--yellow-bg); border: 1px solid #d8c06c; color: #6f5512; }
-  .notice.orange { background: var(--orange-bg); border: 1px solid #e0ad80; color: #8a481b; }
-  .notice.red { background: var(--red-bg); border: 1px solid #d9a99c; color: #8a2f23; }
+  /* strike-severity notices — distinct tints + a bold left accent in the strike color */
+  .notice.yellow { background: var(--yellow-bg); border: 1px solid #ecd24a; border-left: 5px solid #f7d11a; color: #6b5200; }
+  .notice.orange { background: var(--orange-bg); border: 1px solid #ec9a4a; border-left: 5px solid #e8711a; color: #8a3f0e; }
+  .notice.red { background: var(--red-bg); border: 1px solid #e08b78; border-left: 5px solid #c0392b; color: #962a1c; }
 
   .tablerow { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
   .seg { display: inline-flex; background: var(--bg-elev-2); border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 3px; flex-wrap: wrap; }
