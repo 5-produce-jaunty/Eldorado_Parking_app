@@ -889,12 +889,16 @@ function isoOf(y, m, d) { // m is 0-based
 }
 function parseISO(iso) { const [y, m, d] = iso.split("-").map(Number); return { y, m: m - 1, d }; }
 
+function curYM() { const t = parseISO(todayISO); return { y: t.y, m: t.m }; }
+
 function renderRangeCalendar() {
   const pk = state.picker;
   if (!pk.view) { const t = parseISO(pk.start || todayISO); pk.view = { y: t.y, m: t.m }; }
   const { y, m } = pk.view;
   const startDow = new Date(y, m, 1).getDay();
   const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const floor = curYM();
+  const atFloor = (y < floor.y) || (y === floor.y && m <= floor.m); // never navigate before this month
 
   let cells = "";
   for (let i = 0; i < startDow; i++) cells += `<div class="cal-day empty"></div>`;
@@ -910,14 +914,14 @@ function renderRangeCalendar() {
     } else if (pk.start && iso === pk.start) {
       cls += " start end single";
     }
-    cells += `<button type="button" class="${cls}" ${past ? "disabled" : ""} onclick="pickDay('${iso}')"><i>${d}</i></button>`;
+    cells += `<button type="button" class="${cls}" data-iso="${iso}" ${past ? "disabled" : ""}><i>${d}</i></button>`;
   }
 
   return `<div class="cal">
     <div class="cal-head">
-      <button type="button" class="btn cal-nav" onclick="calMove(-1)" aria-label="Previous month">‹</button>
+      <button type="button" class="btn cal-nav" data-nav="-1" ${atFloor ? "disabled" : ""} aria-label="Previous month">‹</button>
       <span class="mname">${CAL_MON[m]} ${y}</span>
-      <button type="button" class="btn cal-nav" onclick="calMove(1)" aria-label="Next month">›</button>
+      <button type="button" class="btn cal-nav" data-nav="1" aria-label="Next month">›</button>
     </div>
     <div class="cal-grid">
       ${CAL_DOW.map(d => `<div class="cal-dow">${d}</div>`).join("")}
@@ -934,12 +938,14 @@ function calLegend() {
   return `<strong>${fmtDate(pk.start)} → ${fmtDate(pk.end)}</strong> · ${daysBetweenInclusive(pk.start, pk.end)} day(s)`;
 }
 
+function drawCalendar() { const host = $("#calHost"); if (host) host.innerHTML = renderRangeCalendar(); }
+
 function pickDay(iso) {
   const pk = state.picker;
   if (!pk.start || pk.end) { pk.start = iso; pk.end = null; }   // start a fresh range
   else if (iso < pk.start) { pk.start = iso; }                  // tapped before start → new start
   else { pk.end = iso; }                                        // complete the range
-  $("#calHost").innerHTML = renderRangeCalendar();
+  drawCalendar();
   previewPermit();
 }
 
@@ -950,7 +956,17 @@ function calMove(delta) {
   if (m < 0) { m = 11; y--; }
   if (m > 11) { m = 0; y++; }
   pk.view = { y, m };
-  $("#calHost").innerHTML = renderRangeCalendar();
+  drawCalendar();
+}
+
+/* One delegated click handler bound to the stable #calHost container.
+   #calHost itself is never replaced (only its innerHTML), so this listener
+   survives every re-render and there are no per-cell inline handlers. */
+function onCalClick(e) {
+  const nav = e.target.closest("[data-nav]");
+  if (nav) { if (!nav.disabled) calMove(parseInt(nav.dataset.nav, 10)); return; }
+  const day = e.target.closest("[data-iso]");
+  if (day && !day.disabled) pickDay(day.dataset.iso);
 }
 
 function renderRequestForm() {
@@ -959,8 +975,8 @@ function renderRequestForm() {
   if (renter) { $("#rtab-request").innerHTML = unitPausedHtml(renter); return; }
   const opts = vehiclesOf(u.id).map(v =>
     `<option value="${escapeHtml(v.plate)}">${escapeHtml(v.plate)} — ${escapeHtml(v.make + " " + v.model)}</option>`).join("");
-  if (!state.picker || !state.picker.start) {
-    state.picker = { start: daysFromToday(1), end: daysFromToday(1), view: null };
+  if (!state.picker) {
+    state.picker = { start: daysFromToday(1), end: null, view: null };
   }
   $("#rtab-request").innerHTML = `
     <div class="card">
@@ -971,7 +987,9 @@ function renderRequestForm() {
       <div id="reqPreview"></div>
       <button class="btn-primary btn-block" onclick="doRequestPermit()">Submit request</button>
     </div>`;
-  $("#calHost").innerHTML = renderRangeCalendar();
+  const host = $("#calHost");
+  host.onclick = onCalClick;
+  host.innerHTML = renderRangeCalendar();
   $("#reqPlate").addEventListener("change", previewPermit);
   previewPermit();
 }
