@@ -402,6 +402,7 @@ const db = {
     { id: "h3", name: "Priya Nair",     unit: "Unit 5 · 98 Cedar Ln",    email: "priya.nair@example.com",     phone: "408-555-0105", role: "resident" },
     { id: "a1", name: "Dolores Reyes",  unit: "Unit 1 · 100 Main St",    email: "board.reyes@example.com",    phone: "408-555-0100", role: "admin",  patrol: true  },
     { id: "a2", name: "Tom Becker",     unit: "Unit 3 · 104 Main St",    email: "board.becker@example.com",   phone: "408-555-0103", role: "admin",  patrol: false },
+    { id: "a3", name: "Frank Lai",      unit: "Unit 7 · 108 Main St",    email: "board.lai@example.com",      phone: "408-555-0107", role: "admin",  patrol: false },
     // Renter sponsored by Priya (h3): Priya's unit is leased out, so her parking is paused.
     { id: "t1", name: "Sam Carter",     unit: "Unit 5 · 98 Cedar Ln",    email: "sam.carter@example.com",     phone: "408-555-0150", role: "renter", sponsor_id: "h3", lease_end: daysFromToday(120), active: true },
   ],
@@ -466,9 +467,9 @@ const db = {
       description: "Replace the side-yard fence with a 6 ft cedar fence and repaint the body and trim.",
       contractor_type: "general", contractor_general: "Bay Area Fencing Co.", contractor_landscape: "",
       paint: { body: "231 Spanish Sand", trim: "36 Navajo White", accent: "417 Oxford Brown" },
-      photos: [],
+      photos: [], votes: {},
       ack_property: true, ack_damage: true, ack_permits: true, ack_unauthorized: true,
-      status: "pending", decided_by: null, decision_comment: "", decided_at: null,
+      status: "pending", decision_comment: "", decided_at: null,
       review_target: daysFromToday(27) },
   ],
 
@@ -780,7 +781,7 @@ function submitArcRequest(data) {
   const owner = getOwner(data.ownerId);
   const req = Object.assign({
     id: uid("arc"), requested_by: data.ownerId, created_at: nowStamp(),
-    status: "pending", decided_by: null, decision_comment: "", decided_at: null,
+    status: "pending", votes: {}, decision_comment: "", decided_at: null,
     review_target: daysFromToday(CONFIG.ARC.REVIEW_DAYS), photos: data.photos || [],
   }, data);
   delete req.ownerId;
@@ -791,24 +792,61 @@ function submitArcRequest(data) {
   return req;
 }
 
-function decideArc(reqId, decision, comment) {
+/* ARC is decided by a MAJORITY of the board. Each board member casts one vote
+   (approve / approve-with-conditions / deny); the request resolves when either
+   side reaches majority. "approve with conditions" counts as an approval. */
+function boardMembers() { return db.homeowners.filter(h => h.role === "admin"); }
+function arcMajority() { return Math.floor(boardMembers().length / 2) + 1; }
+function arcTally(a) {
+  const v = a.votes || {};
+  let approve = 0, conditions = 0, deny = 0;
+  boardMembers().forEach(m => {
+    const x = v[m.id]; if (!x) return;
+    if (x.vote === "approve") approve++; else if (x.vote === "conditions") conditions++; else if (x.vote === "deny") deny++;
+  });
+  return { approve, conditions, deny, approvals: approve + conditions };
+}
+
+function castArcVote(reqId, vote, comment) {
   const a = db.arcRequests.find(x => x.id === reqId);
   if (!a) return;
-  const owner = getOwner(a.requested_by);
-  a.decided_by = state.actingAs;
-  a.decision_comment = comment || "";
-  const map = {
-    approve: ["approved", "approved", "approved"],
-    conditions: ["approved_conditions", "approved with conditions", "approved_with_conditions"],
-    deny: ["denied", "denied", "denied"],
-    info: ["info", "returned for more information", "info_requested"],
-  };
-  const [status, phrase, action] = map[decision];
-  a.status = status;
-  a.decided_at = decision === "info" ? null : nowStamp();
-  logAudit({ entity_type: "arc", entity_id: a.id, action: "arc_" + action,
-    channel: "email", recipient: owner.email,
-    detail: `ARC request ${phrase} by ${getOwner(state.actingAs).name}.${comment ? " Note: " + comment : ""}${decision === "info" ? " (30-day clock paused until the owner responds.)" : ""}` });
+  if (!a.votes) a.votes = {};
+  a.votes[state.actingAs] = { vote, comment: comment || "", at: nowStamp() };
+  if (a.status === "info") a.status = "pending"; // a vote resumes review
+  const voter = getOwner(state.actingAs);
+  logAudit({ entity_type: "arc", entity_id: a.id, action: "arc_vote",
+    channel: "in-app", recipient: "Architectural Committee",
+    detail: `${voter.name} voted ${vote === "conditions" ? "approve w/ conditions" : vote} on ${getOwner(a.requested_by).name}'s ARC request.${comment ? " Note: " + comment : ""}` });
+  resolveArc(a);
+}
+
+function resolveArc(a) {
+  if (["approved", "approved_conditions", "denied"].includes(a.status)) return;
+  const maj = arcMajority(), t = arcTally(a), owner = getOwner(a.requested_by), total = boardMembers().length;
+  if (t.approvals >= maj) {
+    a.status = t.conditions > 0 ? "approved_conditions" : "approved";
+    a.decided_at = nowStamp();
+    a.decision_comment = Object.values(a.votes).filter(x => x.comment).map(x => x.comment).join(" · ");
+    logAudit({ entity_type: "arc", entity_id: a.id, action: "arc_approved",
+      channel: "email", recipient: owner.email,
+      detail: `ARC request ${a.status === "approved_conditions" ? "approved with conditions" : "approved"} by board majority (${t.approvals}/${total}).${a.decision_comment ? " Conditions/notes: " + a.decision_comment : ""}` });
+  } else if (t.deny >= maj) {
+    a.status = "denied";
+    a.decided_at = nowStamp();
+    a.decision_comment = Object.values(a.votes).filter(x => x.vote === "deny" && x.comment).map(x => x.comment).join(" · ");
+    logAudit({ entity_type: "arc", entity_id: a.id, action: "arc_denied",
+      channel: "email", recipient: owner.email,
+      detail: `ARC request denied by board majority (${t.deny}/${total}).${a.decision_comment ? " Reason: " + a.decision_comment : ""}` });
+  }
+}
+
+function arcSetInfo(reqId, comment) {
+  const a = db.arcRequests.find(x => x.id === reqId);
+  if (!a) return;
+  a.status = "info";
+  logAudit({ entity_type: "arc", entity_id: a.id, action: "arc_info_requested",
+    channel: "email", recipient: getOwner(a.requested_by).email,
+    detail: `More information requested by ${getOwner(state.actingAs).name}: ${comment} (30-day review clock paused until the owner responds.)` });
 }
 
 /* =====================================================================
@@ -1554,12 +1592,16 @@ function renderResidentArc() {
   const chip = t => `<label class="arc-chip"><input type="checkbox" data-arctype="${escapeHtml(t)}" ${a.types[t] ? "checked" : ""}>${escapeHtml(t)}</label>`;
   const colorOpts = sel => `<option value="">—</option>` + ARC_COLORS.map(c => `<option ${sel === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
 
-  const listHtml = mine.map(r => `
+  const listHtml = mine.map(r => {
+    const t = arcTally(r);
+    const progress = (r.status === "pending" || r.status === "info")
+      ? ` · board ${t.approvals}/${arcMajority()} approvals` : "";
+    return `
     <div class="listitem">
       <div class="row spread"><strong>${escapeHtml(r.types.join(", ") || "Improvement")}</strong>${arcStatusPill(r.status)}</div>
-      <div class="meta">Submitted ${fmtDate(r.created_at)} · review by ${fmtDate(r.review_target)}</div>
+      <div class="meta">Submitted ${fmtDate(r.created_at)} · review by ${fmtDate(r.review_target)}${progress}</div>
       ${r.decision_comment ? `<div class="meta">Committee: “${escapeHtml(r.decision_comment)}”</div>` : ""}
-    </div>`).join("");
+    </div>`; }).join("");
 
   host.innerHTML = `
     <div class="card">
@@ -1717,16 +1759,28 @@ function openArcDetail(id) {
   `);
 }
 
-function decideArcPrompt(id, decision) {
+function voteArcPrompt(id, vote) {
   const a = db.arcRequests.find(x => x.id === id); if (!a) return;
   const owner = getOwner(a.requested_by);
-  const labels = { approve: "Approve as submitted", conditions: "Approve with conditions", deny: "Deny", info: "Request more info" };
-  const need = decision !== "approve";
+  const labels = { approve: "Approve", conditions: "Approve with conditions", deny: "Deny" };
+  const need = vote !== "approve";
   openModal(`
-    <h3>${labels[decision]}</h3>
+    <h3>Your vote: ${labels[vote]}</h3>
     <p class="muted">${escapeHtml(owner.name)} · ${escapeHtml(a.types.join(", ") || "improvement")}</p>
-    <label class="field"><span>${decision === "approve" ? "Comment (optional)" : "Comment (sent to the owner)"}</span><textarea id="arcDecComment"></textarea></label>
-    <button class="btn-${decision === "deny" ? "danger" : (decision === "info" ? "primary" : "approve")} btn-block" onclick="(function(){ var c=(($('#arcDecComment').value)||'').trim(); if(${need ? "true" : "false"} && !c){ alert('Please add a comment.'); return; } decideArc('${id}','${decision}',c); closeModal(); render(); })()">${labels[decision]}</button>
+    <p class="hint">Needs ${arcMajority()} of ${boardMembers().length} board members to decide.</p>
+    <label class="field"><span>${vote === "approve" ? "Comment (optional)" : "Comment / conditions (sent to owner)"}</span><textarea id="arcVoteComment"></textarea></label>
+    <button class="btn-${vote === "deny" ? "danger" : "approve"} btn-block" onclick="(function(){ var c=(($('#arcVoteComment').value)||'').trim(); if(${need ? "true" : "false"} && !c){ alert('Please add a comment.'); return; } castArcVote('${id}','${vote}',c); closeModal(); render(); })()">Submit vote</button>
+    <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
+  `);
+}
+
+function arcInfoPrompt(id) {
+  const a = db.arcRequests.find(x => x.id === id); if (!a) return;
+  openModal(`
+    <h3>Request more info</h3>
+    <p class="muted">${escapeHtml(getOwner(a.requested_by).name)}</p>
+    <label class="field"><span>What do you need from the owner?</span><textarea id="arcInfoComment"></textarea></label>
+    <button class="btn-primary btn-block" onclick="(function(){ var c=(($('#arcInfoComment').value)||'').trim(); if(!c){ alert('Please describe what is needed.'); return; } arcSetInfo('${id}',c); closeModal(); render(); })()">Send request</button>
     <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Cancel</button>
   `);
 }
@@ -1991,6 +2045,11 @@ function renderAdminQueue() {
     html += `<h2 style="margin-top:0;">Architectural review</h2>` + pendingArc.map(a => {
       const owner = getOwner(a.requested_by);
       const desc = (a.description || "");
+      const t = arcTally(a), maj = arcMajority(), board = boardMembers();
+      const myVote = a.votes && a.votes[state.actingAs] ? a.votes[state.actingAs].vote : null;
+      const voteWord = v => v === "conditions" ? "approve*" : (v || "—");
+      const roster = board.map(m => `${escapeHtml(m.name.split(" ")[0])}: <strong>${voteWord(a.votes && a.votes[m.id] && a.votes[m.id].vote)}</strong>`).join(" · ");
+      const mark = v => myVote === v ? " ✓" : "";
       return `<div class="card">
         <div class="row spread">
           <div><strong>${escapeHtml(owner.name)}</strong><div class="meta">${escapeHtml(a.address)}</div></div>
@@ -2000,13 +2059,14 @@ function renderAdminQueue() {
         <div class="meta" style="margin-top:4px;">Submitted ${fmtDate(a.created_at)} · review by ${fmtDate(a.review_target)}</div>
         <div class="meta" style="margin-top:6px;">${escapeHtml(desc.slice(0, 140))}${desc.length > 140 ? "…" : ""}</div>
         <button class="btn-sm btn-ghost" style="margin-top:8px;" onclick="openArcDetail('${a.id}')">View ${a.photos && a.photos.length ? "📎 " : ""}details</button>
-        <div class="grid2" style="margin-top:8px;">
-          <button class="btn-approve" onclick="decideArcPrompt('${a.id}','approve')">Approve</button>
-          <button class="btn-danger" onclick="decideArcPrompt('${a.id}','deny')">Deny</button>
+        <div class="notice info" style="margin-top:10px;">Board votes — needs ${maj} of ${board.length}. Approvals ${t.approvals}, denials ${t.deny}.<br>${roster}<span class="faint"> (*with conditions)</span></div>
+        <div class="grid2">
+          <button class="btn-approve" onclick="voteArcPrompt('${a.id}','approve')">Approve${mark("approve")}</button>
+          <button class="btn-danger" onclick="voteArcPrompt('${a.id}','deny')">Deny${mark("deny")}</button>
         </div>
         <div class="grid2" style="margin-top:8px;">
-          <button class="btn-sm" onclick="decideArcPrompt('${a.id}','conditions')">Approve w/ conditions</button>
-          <button class="btn-sm btn-ghost" onclick="decideArcPrompt('${a.id}','info')">Request info</button>
+          <button class="btn-sm" onclick="voteArcPrompt('${a.id}','conditions')">Approve w/ conditions${mark("conditions")}</button>
+          <button class="btn-sm btn-ghost" onclick="arcInfoPrompt('${a.id}')">Request info</button>
         </div>
       </div>`;
     }).join("");
@@ -2265,8 +2325,10 @@ window.decidePartyPrompt = decidePartyPrompt;
 window.doSubmitArc = doSubmitArc;
 window.removeArcPhoto = removeArcPhoto;
 window.openArcDetail = openArcDetail;
-window.decideArc = decideArc;
-window.decideArcPrompt = decideArcPrompt;
+window.voteArcPrompt = voteArcPrompt;
+window.castArcVote = castArcVote;
+window.arcInfoPrompt = arcInfoPrompt;
+window.arcSetInfo = arcSetInfo;
 window.closeModal = closeModal;
 window.state = state;
 window.render = render;
