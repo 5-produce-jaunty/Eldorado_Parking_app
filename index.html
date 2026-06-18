@@ -359,8 +359,8 @@ const db = {
   audit: [], // NotificationLog / AuditLog combined; filled below + at runtime
 };
 
-/* Seed a couple of historical audit entries so the log isn't empty */
-seedAudit();
+/* Seed a couple of historical audit entries so the log isn't empty.
+   (Invoked from the boot sequence at the bottom, after helpers/vars exist.) */
 function seedAudit() {
   logAudit({ entity_type: "violation", entity_id: "v1", action: "warning_sent",
     channel: "email", recipient: "james.okafor@example.com",
@@ -1129,6 +1129,7 @@ window.render = render;
 window.$ = $;
 
 /* boot */
+seedAudit();
 buildRoleSelect();
 render();
 </script>
