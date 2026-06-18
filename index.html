@@ -1110,10 +1110,14 @@ function renderRequestForm() {
       <div class="notice info">Guest-lot overnight permits are for your <strong>visitors</strong>. Residents park in their own garage/driveway — overnight street parking (12am–5am) is never permitted.</div>
       <div style="margin:12px 0;">
         <span style="display:block; font-size:13px; color:var(--text-dim); margin-bottom:6px;">Guest vehicle</span>
-        <input id="reqGuestPlate" class="mono" autocapitalize="characters" style="text-transform:uppercase;" placeholder="Guest plate — e.g. 8XYZ999">
-        <div class="grid2" style="margin-top:10px;">
-          <input id="reqGuestState" value="CA" maxlength="2" autocapitalize="characters" placeholder="State">
-          <input id="reqGuestDesc" placeholder="Make/model/color (optional)">
+        <label class="field" style="margin-top:0;"><span>Plate</span><input id="reqGuestPlate" class="mono" autocapitalize="characters" style="text-transform:uppercase;" placeholder="e.g. 8XYZ999"></label>
+        <div class="grid2">
+          <label class="field"><span>State</span><input id="reqGuestState" value="CA" maxlength="2" autocapitalize="characters"></label>
+          <label class="field"><span>Color</span><input id="reqGuestColor" placeholder="Silver"></label>
+        </div>
+        <div class="grid2">
+          <label class="field"><span>Make</span><input id="reqGuestMake" placeholder="Toyota"></label>
+          <label class="field"><span>Model</span><input id="reqGuestModel" placeholder="Camry"></label>
         </div>
         <p class="hint">The permit is tied to this plate and counts toward your guest-lot allowance.</p>
       </div>
@@ -1125,17 +1129,19 @@ function renderRequestForm() {
   const host = $("#calHost");
   host.onclick = onCalClick;
   host.innerHTML = renderRangeCalendar();
-  ["reqGuestPlate", "reqGuestDesc"].forEach(id => $("#" + id) && $("#" + id).addEventListener("input", previewPermit));
+  $("#reqGuestPlate") && $("#reqGuestPlate").addEventListener("input", previewPermit);
   previewPermit();
 }
 
 /* Reads the guest vehicle from the request form (all permits are guest permits). */
 function getReqInput() {
+  const val = sel => (($(sel) && $(sel).value) || "").trim();
+  const color = val("#reqGuestColor"), make = val("#reqGuestMake"), model = val("#reqGuestModel");
   return {
-    plate: (($("#reqGuestPlate") && $("#reqGuestPlate").value) || "").trim().toUpperCase(),
+    plate: val("#reqGuestPlate").toUpperCase(),
     isGuest: true,
-    guestDesc: (($("#reqGuestDesc") && $("#reqGuestDesc").value) || "").trim(),
-    guestState: ((($("#reqGuestState") && $("#reqGuestState").value) || "CA").trim().toUpperCase()),
+    guestDesc: [color, make, model].filter(Boolean).join(" "), // matches "Color Make Model"
+    guestState: (val("#reqGuestState") || "CA").toUpperCase(),
   };
 }
 
