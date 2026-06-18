@@ -1225,7 +1225,7 @@ function renderResidentVehicles() {
   const mine = vehiclesOf(u.id);
   host.innerHTML = `
     ${isRenter(u) ? renterLeaseHtml(u) : ""}
-    <div class="card"><div class="notice info">Register your household's vehicles so the board can identify your cars and track any violations. This is <strong>not</strong> for guest permits — request those under <strong>Request permit</strong>.</div></div>
+    <div class="card"><div class="notice info">Registering your household's vehicles helps keep our neighborhood safe — it lets the community recognize residents' cars at a glance and reach you quickly if there's ever a concern about your vehicle. This is <strong>not</strong> for guest permits — request those under <strong>Request permit</strong>.</div></div>
     <div class="card">
       ${mine.length ? mine.map(v => `
         <div class="listitem">
@@ -1342,7 +1342,7 @@ function renderRenterManage() {
       <h2 style="margin-top:0;">Invite a renter</h2>
       <label class="field"><span>Full name</span><input id="rnName" placeholder="Jordan Lee"></label>
       <label class="field"><span>Email</span><input id="rnEmail" type="email" placeholder="jordan@example.com"></label>
-      <label class="field"><span>Phone (optional)</span><input id="rnPhone" placeholder="408-555-0190"></label>
+      <label class="field"><span>Phone</span><input id="rnPhone" placeholder="408-555-0190"></label>
       <label class="field"><span>Lease end date</span><input id="rnLeaseEnd" type="date" value="${daysFromToday(180)}" min="${daysFromToday(1)}"></label>
       <button class="btn-primary btn-block" onclick="inviteRenter()">Send invite</button>
     </div>`;
