@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<meta name="theme-color" content="#b0512f" />
+<meta name="theme-color" content="#8c3730" />
 <title>Eldorado Parking &amp; Violations</title>
 <style>
   /* ---------- Design tokens ---------- */
@@ -12,14 +12,14 @@
        (Saltillo terracotta, Spanish Sand, Navajo White, Oxford Brown,
         Carbon, Wood Moss, Seattle Red, Graystone). Hex values are close
         approximations of the named swatches. */
-    --bg: #e4d6b8;          /* Spanish Sand — page background */
-    --bg-elev: #fbf8f0;     /* Navajo White — card surface */
-    --bg-elev-2: #efe5d0;   /* light tan (Bone/Oyster) — chips/inputs */
-    --line: #d3c09e;        /* Sand Pebble — borders */
-    --text: #322619;        /* Carbon / Oxford Brown — body text */
-    --text-dim: #5a4632;    /* Oxford Brown — secondary text */
+    --bg: #ece3d1;          /* light warm sand — page background */
+    --bg-elev: #ffffff;     /* white cards (with subtle shadow) */
+    --bg-elev-2: #f1e8d6;   /* light tan — chips/inputs */
+    --line: #ded0b4;        /* Sand Pebble — borders */
+    --text: #2e2620;        /* charcoal-brown — body text */
+    --text-dim: #5a4c3e;    /* Oxford Brown — secondary text */
     --text-faint: #6d6358;  /* deepened Graystone — faint text */
-    --accent: #b5623c;      /* Saltillo — terracotta accent */
+    --accent: #b5623c;      /* Saltillo — terracotta accent (buttons/links) */
     --accent-press: #9a5030;
     --green: #6f7a43;       /* Wood Moss — olive (good) */
     --green-bg: #e7eed2;
@@ -49,8 +49,8 @@
   /* ---------- Top bar (role switcher) ---------- */
   header {
     position: sticky; top: 0; z-index: 30;
-    background: linear-gradient(135deg, #b5623c, #9a5030);
-    border-bottom: 1px solid rgba(0,0,0,.16);
+    background: linear-gradient(135deg, #a8463b, #89342c);
+    border-bottom: 1px solid rgba(0,0,0,.18);
     padding: 10px 14px;
     display: flex; align-items: center; gap: 10px;
   }
@@ -80,6 +80,7 @@
     border-radius: var(--radius);
     padding: 14px;
     margin-bottom: 12px;
+    box-shadow: 0 1px 2px rgba(70,50,30,.06), 0 2px 6px rgba(70,50,30,.05);
   }
   .card.tight { padding: 12px; }
   .row { display: flex; align-items: center; gap: 10px; }
@@ -205,7 +206,7 @@
   .rule-btn small { display: block; color: var(--text-faint); font-weight: 500; font-size: 12px; }
 
   .notice { font-size: 13px; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
-  .notice.info { background: #efe6d3; border: 1px solid #d3c09e; color: #5a4632; }
+  .notice.info { background: #e7eef4; border: 1px solid #cdddea; color: #345a72; }
   .notice.warn { background: var(--amber-bg); border: 1px solid #ddc585; color: #6e5114; }
   .notice.good { background: var(--green-bg); border: 1px solid #b6c489; color: #485524; }
   /* strike-severity notices (match the strike pills): 1 gold, 2 orange, 3 red */
