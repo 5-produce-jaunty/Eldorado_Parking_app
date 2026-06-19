@@ -294,7 +294,7 @@
 
   <!-- ============ RESIDENT ============ -->
   <section id="screen-resident" class="screen">
-    <h1 id="residentHello">My Parking</h1>
+    <h1 id="residentHello">My Dashboard</h1>
 
     <div class="seg" id="residentTabs" style="margin-bottom:14px;">
       <button data-rtab="permits" class="active">Guest permits</button>
@@ -1199,7 +1199,7 @@ function openViolationDetail(violationId) {
 function renderResident() {
   const u = currentUser();
   const renterMode = isRenter(u);
-  $("#residentHello").textContent = `${u.name.split(" ")[0]}'s Parking`;
+  $("#residentHello").textContent = `${u.name.split(" ")[0]}'s Dashboard`;
 
   // The "Renter" management tab is for owners only.
   const renterTabBtn = document.querySelector('#residentTabs button[data-rtab="renter"]');
