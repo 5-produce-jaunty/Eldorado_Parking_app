@@ -1363,7 +1363,10 @@ function renderRequestForm() {
         </div>
         <p class="hint">The permit is tied to this plate and counts toward your guest-lot allowance.</p>
       </div>
-      <label class="field"><span>Dates</span><div id="calHost"></div></label>
+      <div style="margin:12px 0;">
+        <span style="display:block; font-size:13px; color:var(--text-dim); margin-bottom:6px;">Dates</span>
+        <div id="calHost"></div>
+      </div>
       <label class="field"><span>Notes (optional)</span><textarea id="reqNotes" placeholder="Anything the board should know"></textarea></label>
       <div id="reqPreview"></div>
       <button class="btn-primary btn-block" onclick="doRequestPermit()">Submit request</button>
