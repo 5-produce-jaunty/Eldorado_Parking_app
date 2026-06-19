@@ -1274,30 +1274,43 @@ function isoOf(y, m, d) { // m is 0-based
 }
 function parseISO(iso) { const [y, m, d] = iso.split("-").map(Number); return { y, m: m - 1, d }; }
 
-function curYM() { const t = parseISO(todayISO); return { y: t.y, m: t.m }; }
+/* Reusable inline calendar instances, keyed by host element id.
+   opts: { mode:"range"|"single", min:ISO, start, end, onChange } */
+const calendars = {};
 
-function renderRangeCalendar() {
-  const pk = state.picker;
-  if (!pk.view) { const t = parseISO(pk.start || todayISO); pk.view = { y: t.y, m: t.m }; }
-  const { y, m } = pk.view;
+function initCalendar(id, opts) {
+  calendars[id] = Object.assign({ mode: "range", min: todayISO, start: null, end: null, view: null, onChange: function () {} }, opts);
+  const host = document.getElementById(id);
+  if (!host) return;
+  host.onclick = ev => onCalClick(id, ev);   // one delegated handler on the stable host
+  drawCal(id);
+}
+function drawCal(id) { const h = document.getElementById(id); if (h) h.innerHTML = renderCal(id); }
+
+function renderCal(id) {
+  const c = calendars[id];
+  if (!c.view) { const t = parseISO(c.start || c.min); c.view = { y: t.y, m: t.m }; }
+  const { y, m } = c.view;
   const startDow = new Date(y, m, 1).getDay();
-  const daysInMonth = new Date(y, m + 1, 0).getDate();
-  const floor = curYM();
-  const atFloor = (y < floor.y) || (y === floor.y && m <= floor.m); // never navigate before this month
+  const dim = new Date(y, m + 1, 0).getDate();
+  const f = parseISO(c.min);
+  const atFloor = (y < f.y) || (y === f.y && m <= f.m); // can't go before the min month
 
   let cells = "";
   for (let i = 0; i < startDow; i++) cells += `<div class="cal-day empty"></div>`;
-  for (let d = 1; d <= daysInMonth; d++) {
+  for (let d = 1; d <= dim; d++) {
     const iso = isoOf(y, m, d);
-    const past = iso < todayISO;
+    const past = iso < c.min;
     let cls = "cal-day";
-    if (pk.start && pk.end) {
-      if (iso === pk.start) cls += " start";
-      if (iso === pk.end) cls += " end";
-      if (iso === pk.start && iso === pk.end) cls += " single";
-      if (iso > pk.start && iso < pk.end) cls += " inrange";
-    } else if (pk.start && iso === pk.start) {
-      cls += " start end single";
+    if (c.mode === "range") {
+      if (c.start && c.end) {
+        if (iso === c.start) cls += " start";
+        if (iso === c.end) cls += " end";
+        if (iso === c.start && iso === c.end) cls += " single";
+        if (iso > c.start && iso < c.end) cls += " inrange";
+      } else if (c.start && iso === c.start) cls += " start end single";
+    } else {
+      if (c.start && iso === c.start) cls += " start end single";
     }
     cells += `<button type="button" class="${cls}" data-iso="${iso}" ${past ? "disabled" : ""}><i>${d}</i></button>`;
   }
@@ -1312,46 +1325,37 @@ function renderRangeCalendar() {
       ${CAL_DOW.map(d => `<div class="cal-dow">${d}</div>`).join("")}
       ${cells}
     </div>
-    <div class="cal-legend">${calLegend()}</div>
+    ${c.mode === "range" ? `<div class="cal-legend">${calLegend(c)}</div>` : ""}
   </div>`;
 }
 
-function calLegend() {
-  const pk = state.picker;
-  if (!pk.start) return "Tap your <strong>first</strong> night.";
-  if (!pk.end) return `Start <strong>${fmtDate(pk.start)}</strong> — now tap the <strong>last</strong> night.`;
-  return `<strong>${fmtDate(pk.start)} → ${fmtDate(pk.end)}</strong> · ${daysBetweenInclusive(pk.start, pk.end)} day(s)`;
+function calLegend(c) {
+  if (!c.start) return "Tap your <strong>first</strong> day.";
+  if (!c.end) return `Start <strong>${fmtDate(c.start)}</strong> — now tap the <strong>last</strong> day.`;
+  return `<strong>${fmtDate(c.start)} → ${fmtDate(c.end)}</strong> · ${daysBetweenInclusive(c.start, c.end)} day(s)`;
 }
 
-function drawCalendar() { const host = $("#calHost"); if (host) host.innerHTML = renderRangeCalendar(); }
-
-function pickDay(iso) {
-  const pk = state.picker;
-  if (!pk.start || pk.end) { pk.start = iso; pk.end = null; }   // start a fresh range
-  else if (iso < pk.start) { pk.start = iso; }                  // tapped before start → new start
-  else { pk.end = iso; }                                        // complete the range
-  drawCalendar();
-  previewPermit();
-}
-
-function calMove(delta) {
-  const pk = state.picker;
-  let { y, m } = pk.view;
-  m += delta;
-  if (m < 0) { m = 11; y--; }
-  if (m > 11) { m = 0; y++; }
-  pk.view = { y, m };
-  drawCalendar();
-}
-
-/* One delegated click handler bound to the stable #calHost container.
-   #calHost itself is never replaced (only its innerHTML), so this listener
-   survives every re-render and there are no per-cell inline handlers. */
-function onCalClick(e) {
+function onCalClick(id, e) {
+  const c = calendars[id]; if (!c) return;
   const nav = e.target.closest("[data-nav]");
-  if (nav) { if (!nav.disabled) calMove(parseInt(nav.dataset.nav, 10)); return; }
+  if (nav) {
+    if (nav.disabled) return;
+    let { y, m } = c.view; m += parseInt(nav.dataset.nav, 10);
+    if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+    c.view = { y, m }; drawCal(id); return;
+  }
   const day = e.target.closest("[data-iso]");
-  if (day && !day.disabled) pickDay(day.dataset.iso);
+  if (!day || day.disabled) return;
+  const iso = day.dataset.iso;
+  if (c.mode === "range") {
+    if (!c.start || c.end) { c.start = iso; c.end = null; }   // start a fresh range
+    else if (iso < c.start) { c.start = iso; }                // tapped before start → new start
+    else { c.end = iso; }                                     // complete the range
+    drawCal(id);
+    c.onChange({ start: c.start, end: c.end });
+  } else {
+    c.start = iso; drawCal(id); c.onChange(iso);
+  }
 }
 
 function renderRequestForm() {
@@ -1385,9 +1389,10 @@ function renderRequestForm() {
       <div id="reqPreview"></div>
       <button class="btn-primary btn-block" onclick="doRequestPermit()">Submit request</button>
     </div>`;
-  const host = $("#calHost");
-  host.onclick = onCalClick;
-  host.innerHTML = renderRangeCalendar();
+  initCalendar("calHost", {
+    mode: "range", min: todayISO, start: state.picker.start, end: state.picker.end,
+    onChange: v => { state.picker.start = v.start; state.picker.end = v.end; previewPermit(); },
+  });
   $("#reqGuestPlate") && $("#reqGuestPlate").addEventListener("input", previewPermit);
   previewPermit();
 }
@@ -1496,7 +1501,10 @@ function renderResidentPool() {
     <div class="card">
       <h2 style="margin-top:0;">Reserve the pool gazebo</h2>
       <div class="notice info">Reserves the <strong>gazebo area</strong> for your party. The pool/spa stay open to other residents up to the ${P.CAPACITY}-person capacity. Every request goes to the board for approval.</div>
-      <label class="field"><span>Date</span><input id="ppDate" type="date" min="${earliest}" value="${pr.date}"></label>
+      <div style="margin:12px 0;">
+        <span style="display:block; font-size:13px; color:var(--text-dim); margin-bottom:6px;">Date</span>
+        <div id="ppCalHost"></div>
+      </div>
       <label class="field"><span>Start time</span><input id="ppStart" type="time" value="${pr.start}"></label>
       <label class="field"><span>End time (max ${P.MAX_HOURS}h, by ${fmtTime(P.LATEST_END)})</span><input id="ppEnd" type="time" value="${pr.end}"></label>
       <label class="field"><span>People attending (max ${P.CAPACITY}, including you)</span><input id="ppGuests" type="number" inputmode="numeric" min="1" max="${P.CAPACITY}" value="${pr.guests}"></label>
@@ -1521,10 +1529,14 @@ function renderResidentPool() {
     </div>
     ${mine.length ? `<h2>My reservations</h2><div class="card">${listHtml}</div>` : ""}
   `;
+  initCalendar("ppCalHost", {
+    mode: "single", min: daysFromToday(CONFIG.POOL.ADVANCE_DAYS), start: pr.date || null,
+    onChange: iso => { state.party.date = iso; previewPoolParty(); },
+  });
   // The end time is bounded to the allowed window (start is never moved to fit it).
   $("#ppStart").addEventListener("change", updatePartyTimes);
   $("#ppEnd").addEventListener("change", updatePartyTimes);
-  ["ppDate", "ppGuests", "ppNotes", "ppAgree", "ppDeposit"].forEach(id => {
+  ["ppGuests", "ppNotes", "ppAgree", "ppDeposit"].forEach(id => {
     const el = $("#" + id); if (el) el.addEventListener("input", previewPoolParty);
   });
   updatePartyTimes(); // set bounds + normalize on load
@@ -1558,9 +1570,9 @@ function updatePartyTimes() {
 
 function previewPoolParty() {
   const pr = state.party; if (!pr) return;
-  // keep state in sync so data survives re-renders
-  if ($("#ppDate")) {
-    pr.date = $("#ppDate").value; pr.start = $("#ppStart").value; pr.end = $("#ppEnd").value;
+  // keep state in sync so data survives re-renders (date comes from the calendar)
+  if ($("#ppStart")) {
+    pr.start = $("#ppStart").value; pr.end = $("#ppEnd").value;
     pr.guests = $("#ppGuests").value; pr.notes = $("#ppNotes").value;
     pr.agreeRules = $("#ppAgree").checked; pr.agreeDeposit = $("#ppDeposit").checked;
   }
@@ -1635,9 +1647,9 @@ function renderResidentArc() {
         <label class="field"><span>Phone (home)</span><input id="arcPhoneH" value="${escapeHtml(a.phone_home)}"></label>
         <label class="field"><span>Phone (work)</span><input id="arcPhoneW" value="${escapeHtml(a.phone_work)}"></label>
       </div>
-      <div class="grid2">
-        <label class="field"><span>Proposed start</span><input id="arcStart" type="date" value="${a.start_date}"></label>
-        <label class="field"><span>Proposed finish</span><input id="arcFinish" type="date" value="${a.finish_date}"></label>
+      <div style="margin:12px 0;">
+        <span style="display:block; font-size:13px; color:var(--text-dim); margin-bottom:6px;">Proposed dates (start → finish)</span>
+        <div id="arcCalHost"></div>
       </div>
 
       <span style="display:block; font-size:13px; color:var(--text-dim); margin:12px 0 0;">Home improvements</span>
@@ -1685,9 +1697,13 @@ function renderResidentArc() {
   $("#arcContractorSeg").querySelectorAll("button").forEach(b =>
     b.addEventListener("click", () => { arcSync(); state.arc.contractor_type = b.dataset.arcwork; renderResidentArc(); }));
   host.querySelectorAll("[data-arctype]").forEach(c => c.addEventListener("change", arcSync));
-  ["arcAddress", "arcEmail", "arcPhoneH", "arcPhoneW", "arcStart", "arcFinish", "arcOther", "arcDesc", "arcBody", "arcTrim", "arcAccent", "arcContractor", "arcAck1", "arcAck2", "arcAck3", "arcAck4"]
+  ["arcAddress", "arcEmail", "arcPhoneH", "arcPhoneW", "arcOther", "arcDesc", "arcBody", "arcTrim", "arcAccent", "arcContractor", "arcAck1", "arcAck2", "arcAck3", "arcAck4"]
     .forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", arcSync); });
   const fi = $("#arcPhotos"); if (fi) fi.addEventListener("change", () => addArcPhotos(fi.files));
+  initCalendar("arcCalHost", {
+    mode: "range", min: todayISO, start: a.start_date || null, end: a.finish_date || null,
+    onChange: v => { a.start_date = v.start || ""; a.finish_date = v.end || ""; arcPreview(); },
+  });
   renderArcPhotos();
   arcPreview();
 }
@@ -1696,7 +1712,7 @@ function arcSync() {
   const a = state.arc; if (!a || !$("#arcAddress")) return;
   const v = id => { const el = $("#" + id); return el ? el.value : undefined; };
   a.address = v("arcAddress"); a.email = v("arcEmail"); a.phone_home = v("arcPhoneH"); a.phone_work = v("arcPhoneW");
-  a.start_date = v("arcStart"); a.finish_date = v("arcFinish"); a.other_home = v("arcOther"); a.description = v("arcDesc");
+  a.other_home = v("arcOther"); a.description = v("arcDesc"); // dates come from the calendar
   a.paint.body = v("arcBody") || ""; a.paint.trim = v("arcTrim") || ""; a.paint.accent = v("arcAccent") || "";
   const c = v("arcContractor");
   if (c !== undefined) { if (a.contractor_type === "general") a.contractor_general = c; else if (a.contractor_type === "landscape") a.contractor_landscape = c; }
@@ -2342,8 +2358,6 @@ window.doRequestPermit = doRequestPermit;
 window.addVehicle = addVehicle;
 window.confirmDeleteVehicle = confirmDeleteVehicle;
 window.doDeleteVehicle = doDeleteVehicle;
-window.pickDay = pickDay;
-window.calMove = calMove;
 window.inviteRenter = inviteRenter;
 window.confirmEndLease = confirmEndLease;
 window.endLease = endLease;
