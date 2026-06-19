@@ -781,7 +781,7 @@ function submitArcRequest(data) {
   const owner = getOwner(data.ownerId);
   const req = Object.assign({
     id: uid("arc"), requested_by: data.ownerId, created_at: nowStamp(),
-    status: "pending", votes: {}, decision_comment: "", decided_at: null,
+    status: "pending", votes: {}, decision_comment: "", decided_at: null, thread: [],
     review_target: daysFromToday(CONFIG.ARC.REVIEW_DAYS), photos: data.photos || [],
   }, data);
   delete req.ownerId;
@@ -844,9 +844,23 @@ function arcSetInfo(reqId, comment) {
   const a = db.arcRequests.find(x => x.id === reqId);
   if (!a) return;
   a.status = "info";
+  if (!a.thread) a.thread = [];
+  a.thread.push({ by: state.actingAs, kind: "info_request", text: comment, at: nowStamp() });
   logAudit({ entity_type: "arc", entity_id: a.id, action: "arc_info_requested",
     channel: "email", recipient: getOwner(a.requested_by).email,
     detail: `More information requested by ${getOwner(state.actingAs).name}: ${comment} (30-day review clock paused until the owner responds.)` });
+}
+
+/* Owner replies to a board info request — resumes the review. */
+function respondArc(reqId, text) {
+  const a = db.arcRequests.find(x => x.id === reqId);
+  if (!a) return;
+  if (!a.thread) a.thread = [];
+  a.thread.push({ by: state.actingAs, kind: "response", text: text, at: nowStamp() });
+  a.status = "pending"; // back in the board's queue
+  logAudit({ entity_type: "arc", entity_id: a.id, action: "arc_owner_response",
+    channel: "in-app", recipient: "Architectural Committee",
+    detail: `${getOwner(a.requested_by).name} responded to the info request: ${text}` });
 }
 
 /* =====================================================================
@@ -1600,10 +1614,12 @@ function renderResidentArc() {
     const progress = (r.status === "pending" || r.status === "info")
       ? ` · board ${t.approvals}/${arcMajority()} approvals` : "";
     return `
-    <div class="listitem">
+    <div class="listitem" style="cursor:pointer;" onclick="openArcDetail('${r.id}')">
       <div class="row spread"><strong>${escapeHtml(r.types.join(", ") || "Improvement")}</strong>${arcStatusPill(r.status)}</div>
       <div class="meta">Submitted ${fmtDate(r.created_at)} · review by ${fmtDate(r.review_target)}${progress}</div>
-      ${r.decision_comment ? `<div class="meta">Committee: “${escapeHtml(r.decision_comment)}”</div>` : ""}
+      ${r.status === "info" ? `<div class="meta" style="color:var(--accent);font-weight:600;">The committee asked for more info — tap to respond ›</div>`
+        : r.decision_comment ? `<div class="meta">Committee: “${escapeHtml(r.decision_comment)}”</div>`
+        : `<div class="meta"><span class="link">View details ›</span></div>`}
     </div>`; }).join("");
 
   host.innerHTML = `
@@ -1757,8 +1773,17 @@ function openArcDetail(id) {
     <div class="card tight">${escapeHtml(a.description || "—")}</div>
     <div class="card tight"><div class="meta">${escapeHtml(contractor)}</div>${paint ? `<div class="meta" style="margin-top:6px;">Paint — ${escapeHtml(paint)}</div>` : ""}</div>
     ${a.photos && a.photos.length ? `<div class="row wrap" style="gap:8px;">` + a.photos.map(p => `<img src="${p}" style="width:100%;border-radius:10px;border:1px solid var(--line);">`).join("") + `</div>` : `<div class="card tight" style="text-align:center;color:var(--text-faint);">No attachments</div>`}
-    ${a.decision_comment ? `<div class="notice info">Committee: ${escapeHtml(a.decision_comment)}</div>` : ""}
-    <button class="btn-primary btn-block" style="margin-top:8px;" onclick="closeModal()">Close</button>
+    ${(a.thread && a.thread.length) ? `<h2 style="margin-top:14px;">Messages</h2>` + a.thread.map(t => {
+      const who = getOwner(t.by);
+      const mine = t.kind === "response";
+      return `<div class="notice ${mine ? "good" : "warn"}" style="margin:6px 0;"><strong>${escapeHtml(who ? who.name : (mine ? "Owner" : "Board"))}</strong> · ${fmtDateTime(t.at)}<br>${escapeHtml(t.text)}</div>`;
+    }).join("") : ""}
+    ${a.decision_comment ? `<div class="notice info">Committee decision: ${escapeHtml(a.decision_comment)}</div>` : ""}
+    ${(a.status === "info" && a.requested_by === state.actingAs) ? `
+      <label class="field"><span>Your response to the committee</span><textarea id="arcRespondText" placeholder="Add the requested information…"></textarea></label>
+      <button class="btn-primary btn-block" onclick="(function(){ var t=(($('#arcRespondText').value)||'').trim(); if(!t){ alert('Please type a response.'); return; } respondArc('${a.id}',t); closeModal(); render(); })()">Send response</button>
+      <button class="btn-ghost btn-block" style="margin-top:8px;" onclick="closeModal()">Close</button>`
+      : `<button class="btn-primary btn-block" style="margin-top:8px;" onclick="closeModal()">Close</button>`}
   `);
 }
 
@@ -2332,6 +2357,7 @@ window.voteArcPrompt = voteArcPrompt;
 window.castArcVote = castArcVote;
 window.arcInfoPrompt = arcInfoPrompt;
 window.arcSetInfo = arcSetInfo;
+window.respondArc = respondArc;
 window.closeModal = closeModal;
 window.state = state;
 window.render = render;
