@@ -892,13 +892,13 @@ function strikeLabel(n) {
 /* Graduated severity color for a strike count: 0 gray, 1 yellow, 2 orange, 3+ red. */
 function strikeClass(n) { return n <= 0 ? "gray" : n === 1 ? "yellow" : n === 2 ? "orange" : "red"; }
 
-function logViolation({ plate, ruleId, location, notes, photo }) {
+function logViolation({ plate, ruleId, location, notes, photo, vehicleDesc }) {
   const nextStrike = strikeCountForPlate(plate) + 1;
   const status = nextStrike >= 3 ? "tow-eligible" : (nextStrike === 2 ? "escalated" : "issued");
   const v = {
     id: uid("v"), plate, rule_id: ruleId, location: location || "",
     occurred_at: nowStamp(), logged_by: state.actingAs,
-    photo: photo || null,
+    photo: photo || null, vehicle_desc: vehicleDesc || "",
     strike_number: nextStrike, status, notes: notes || "",
   };
   db.violations.push(v);
@@ -918,7 +918,7 @@ function logViolation({ plate, ruleId, location, notes, photo }) {
     // so an unidentified vehicle still reaches tow-eligibility at strike 3.
     logAudit({ entity_type: "violation", entity_id: v.id, action: "notice_posted",
       channel: "notice", recipient: `Windshield · plate ${plate}`, delivered: true,
-      detail: `${headline} — ${rule.short_name}. No owner on file; windshield notice posted. Strike accrues to the plate${nextStrike >= 3 ? " — vehicle is now tow-eligible." : "."}` });
+      detail: `${headline} — ${rule.short_name}.${v.vehicle_desc ? " Vehicle: " + v.vehicle_desc + "." : ""} No owner on file; windshield notice posted. Strike accrues to the plate${nextStrike >= 3 ? " — vehicle is now tow-eligible." : "."}` });
   }
   return v;
 }
@@ -997,9 +997,11 @@ function renderLookup(plate) {
   const guestSponsor = (!owner && permit && permit.is_guest) ? getOwner(permit.requested_by) : null;
 
   const ok = !!permit;
+  const priorDesc = (!vehicle && !guestSponsor) ? (recent.find(x => x.vehicle_desc) || {}).vehicle_desc : "";
   const nameLine = owner ? owner.name : guestSponsor ? `Guest of ${guestSponsor.name}` : "Unknown owner";
   const vehLine = vehicle ? `${vehicle.color} ${vehicle.make} ${vehicle.model} · ${vehicle.state}`
-    : guestSponsor ? ((permit.guest_desc || "Guest vehicle") + (permit.guest_state ? " · " + permit.guest_state : "")) : "Vehicle not on file";
+    : guestSponsor ? ((permit.guest_desc || "Guest vehicle") + (permit.guest_state ? " · " + permit.guest_state : ""))
+    : priorDesc ? priorDesc : "Vehicle not on file";
   const unitLine = owner ? owner.unit : guestSponsor ? guestSponsor.unit : "";
   let html = `
     <div class="status ${ok ? "ok" : "bad"}">
@@ -1079,6 +1081,8 @@ function openLogViolation(plate) {
 function selectRule(plate, ruleId) {
   const rule = getRule(ruleId);
   const nextStrike = strikeCountForPlate(plate) + 1;
+  const known = vehicleOfPlate(plate);
+  const prior = known ? null : (violationsForPlate(plate).find(x => x.vehicle_desc) || null);
   openModal(`
     <h3>Confirm violation</h3>
     <p class="muted">Plate <span class="plate">${escapeHtml(plate)}</span></p>
@@ -1086,6 +1090,14 @@ function selectRule(plate, ruleId) {
     <div class="notice ${nextStrike >= 3 ? "warn" : nextStrike === 2 ? "warn" : "good"}">
       This will be <strong>${escapeHtml(strikeLabel(nextStrike))}</strong> for this plate.
     </div>
+    ${!known ? `
+    <span style="display:block; font-size:13px; color:var(--text-dim); margin:12px 0 0;">Vehicle description (not on file — helps identify it)</span>
+    <div class="grid2">
+      <label class="field"><span>Color</span><input id="vColor" placeholder="Silver" value="${prior ? escapeHtml((prior.vehicle_desc.split(" ")[0]) || "") : ""}"></label>
+      <label class="field"><span>Make</span><input id="vMake" placeholder="Toyota" value="${prior ? escapeHtml((prior.vehicle_desc.split(" ")[1]) || "") : ""}"></label>
+    </div>
+    <label class="field"><span>Model</span><input id="vModel" placeholder="Camry" value="${prior ? escapeHtml(prior.vehicle_desc.split(" ").slice(2).join(" ")) : ""}"></label>
+    ` : ""}
     <label class="field"><span>Location</span>
       <input id="vLoc" placeholder="e.g. Guest Lot B, stall 14" /></label>
     ${ruleId === "r5" ? `<label class="field"><span>Note (required for catch-all)</span><textarea id="vNote" placeholder="Describe the violation…"></textarea></label>`
@@ -1107,9 +1119,11 @@ function confirmViolation(plate, ruleId) {
   const fileInput = $("#vPhoto");
   const file = fileInput && fileInput.files && fileInput.files[0];
   const location = ($("#vLoc") && $("#vLoc").value) || "";
+  const vehicleDesc = ["#vColor", "#vMake", "#vModel"]
+    .map(s => (($(s) && $(s).value) || "").trim()).filter(Boolean).join(" ");
 
   const finish = (photo) => {
-    const v = logViolation({ plate, ruleId, location, notes: note, photo });
+    const v = logViolation({ plate, ruleId, location, notes: note, photo, vehicleDesc });
     const owner = ownerOfPlate(plate);
     closeModal();
     openModal(`
@@ -1196,7 +1210,8 @@ function openViolationDetail(violationId) {
       <div class="row spread"><span class="muted">When</span><span>${fmtDateTime(v.occurred_at)}</span></div>
       <div class="row spread" style="margin-top:8px;"><span class="muted">Where</span><span style="text-align:right;">${escapeHtml(v.location || "—")}</span></div>
       <div class="row spread" style="margin-top:8px;"><span class="muted">Owner</span><span style="text-align:right;">${owner ? escapeHtml(owner.name) : "Unknown — no owner on file"}</span></div>
-      ${vehicle ? `<div class="row spread" style="margin-top:8px;"><span class="muted">Vehicle</span><span style="text-align:right;">${escapeHtml(`${vehicle.color} ${vehicle.make} ${vehicle.model} · ${vehicle.state}`)}</span></div>` : ""}
+      ${vehicle ? `<div class="row spread" style="margin-top:8px;"><span class="muted">Vehicle</span><span style="text-align:right;">${escapeHtml(`${vehicle.color} ${vehicle.make} ${vehicle.model} · ${vehicle.state}`)}</span></div>`
+        : v.vehicle_desc ? `<div class="row spread" style="margin-top:8px;"><span class="muted">Vehicle</span><span style="text-align:right;">${escapeHtml(v.vehicle_desc)}</span></div>` : ""}
       <div class="row spread" style="margin-top:8px;"><span class="muted">Logged by</span><span style="text-align:right;">${escapeHtml(loggedBy ? loggedBy.name : "—")}</span></div>
     </div>
     ${v.notes ? `<div class="card tight"><span class="muted">Notes</span><div style="margin-top:6px;">${escapeHtml(v.notes)}</div></div>` : ""}
