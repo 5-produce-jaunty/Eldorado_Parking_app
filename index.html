@@ -1104,7 +1104,7 @@ function selectRule(plate, ruleId) {
                        : `<label class="field"><span>Note (optional)</span><textarea id="vNote"></textarea></label>`}
     <label class="field"><span>Photo</span>
       <label class="btn btn-block" style="cursor:pointer;" id="vPhotoBtn">
-        📷 Attach photo <input id="vPhoto" type="file" accept="image/*" capture="environment" hidden onchange="previewViolationPhoto(this)">
+        📷 Add photo <input id="vPhoto" type="file" accept="image/*" hidden onchange="previewViolationPhoto(this)">
       </label>
       <div id="vPhotoPreview"></div>
     </label>
@@ -1157,7 +1157,7 @@ function previewViolationPhoto(input) {
   const btn = $("#vPhotoBtn");
   const file = input.files && input.files[0];
   if (!host) return;
-  if (!file) { host.innerHTML = ""; if (btn) btn.firstChild.textContent = "📷 Attach photo "; return; }
+  if (!file) { host.innerHTML = ""; if (btn) btn.firstChild.textContent = "📷 Add photo "; return; }
   const reader = new FileReader();
   reader.onload = () => {
     host.innerHTML = `
@@ -1177,7 +1177,7 @@ function clearViolationPhoto() {
   const input = $("#vPhoto");
   if (input) input.value = "";
   const host = $("#vPhotoPreview"); if (host) host.innerHTML = "";
-  const btn = $("#vPhotoBtn"); if (btn) btn.firstChild.textContent = "📷 Attach photo ";
+  const btn = $("#vPhotoBtn"); if (btn) btn.firstChild.textContent = "📷 Add photo ";
 }
 
 /* Full detail view for a single violation — opened by tapping any violation row. */
